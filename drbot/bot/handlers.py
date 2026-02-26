@@ -2038,6 +2038,16 @@ def make_handlers(
             # Build messages list from recent history (tool-turn-aware)
             recent = await conv_store.get_recent_turns(user_id, session_key, limit=20)
             messages = [_build_message_from_turn(t) for t in recent]
+            # Strip orphaned tool-turn fragments from the start of history.
+            # get_recent_turns slices the last N turns blindly, so the cutoff
+            # can land inside a tool_use/tool_result pair leaving a user
+            # tool_result with no matching assistant tool_use — causing a 400.
+            # Drop everything before the first plain-string user message.
+            while messages:
+                first = messages[0]
+                if first["role"] == "user" and isinstance(first["content"], str):
+                    break
+                messages.pop(0)
             messages.append({"role": "user", "content": text})
 
             # Save the user turn immediately
