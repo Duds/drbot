@@ -1948,20 +1948,23 @@ def make_handlers(
         stored as the assistant turn. Tool turns are stored separately with the
         _TOOL_TURN_PREFIX sentinel.
         """
-        accumulated_text: list[str] = []
-        current_display: list[str] = []
+        accumulated_text: list[str] = []   # all text (for conversation storage)
+        current_display: list[str] = []    # text currently shown in Telegram message
         tool_turns: list[tuple[list[dict], list[dict]]] = []  # (assistant_blocks, result_blocks)
 
-        # Buffer for live Telegram updates — edit every ~200 chars
-        display_buffer = ""
+        in_tool_turn = False  # True between ToolStatusChunk and ToolTurnComplete;
+                              # TextChunks arriving in this window are suppressed
         last_edit_len = 0
 
         async def _flush_display(final: bool = False) -> None:
             """Push accumulated display text to Telegram message."""
-            nonlocal display_buffer, last_edit_len
+            nonlocal last_edit_len
             full = "".join(current_display)
             suffix = "" if final else " …"
             candidate = full + suffix
+
+            if not candidate.strip():
+                return  # nothing to show — avoid blank-message errors
 
             # Only edit if there's meaningful new content
             if len(full) > last_edit_len + 50 or final:
@@ -1985,37 +1988,55 @@ def make_handlers(
                 system=system_prompt,
             ):
                 if session_manager.is_cancelled(user_id):
-                    await sent.edit_text(
-                        "".join(current_display) + "\n\n_[cancelled]_",
-                        parse_mode="Markdown",
-                    )
+                    shown = "".join(current_display)
+                    try:
+                        await sent.edit_text(
+                            (shown + "\n\n_[cancelled]_").strip(),
+                            parse_mode="Markdown",
+                        )
+                    except Exception:
+                        pass
                     return
 
                 if isinstance(event, TextChunk):
                     accumulated_text.append(event.text)
-                    current_display.append(event.text)
-                    # Batch edits to avoid Telegram flood limits
-                    if len("".join(current_display)) - last_edit_len >= 200:
-                        await _flush_display()
+                    if in_tool_turn:
+                        # Suppress internal monologue emitted while a tool is
+                        # executing (between ToolStatusChunk and ToolTurnComplete).
+                        logger.debug(
+                            "Suppressing in-tool TextChunk (%d chars) for user %d",
+                            len(event.text), user_id,
+                        )
+                    else:
+                        # Normal path: live-stream text to Telegram.
+                        # Covers pure-text responses, pre-tool preamble, and
+                        # final response after all tool turns complete.
+                        current_display.append(event.text)
+                        if len("".join(current_display)) - last_edit_len >= 200:
+                            await _flush_display()
 
                 elif isinstance(event, ToolStatusChunk):
-                    # Show tool invocation status to user
-                    status_line = f"\n\n_⚙️ Using {event.tool_name}…_"
-                    current_display.append(status_line)
-                    await _flush_display()
+                    in_tool_turn = True
+                    # Show a clean tool-status indicator (direct edit, no append)
+                    try:
+                        await sent.edit_text(
+                            f"_⚙️ Using {event.tool_name}…_",
+                            parse_mode="Markdown",
+                        )
+                    except Exception:
+                        pass
 
                 elif isinstance(event, ToolResultChunk):
-                    # Remove the "using tool…" indicator; result will appear in next text
-                    # Remove the last appended status line
-                    if current_display and "⚙️ Using" in current_display[-1]:
-                        current_display.pop()
+                    pass  # tool finished; ToolTurnComplete follows
 
                 elif isinstance(event, ToolTurnComplete):
+                    in_tool_turn = False
                     # Store the tool turn for conversation history
                     tool_turns.append(
                         (event.assistant_blocks, event.tool_result_blocks)
                     )
-                    # Clear display buffer for next iteration's text
+                    # Reset display for the next iteration's text (final response
+                    # or further tool preamble)
                     current_display = []
                     last_edit_len = 0
 

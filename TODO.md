@@ -412,3 +412,80 @@ These were in my-agent and caused bloat. **Do not implement.**
 - [SOUL.md](./config/SOUL.md) — DrBot's system identity and available commands
 - [Blog: GoBot vs OpenClaw](https://autonomee.ai/blog/gobot-vs-openclaw/) — architectural lessons
 - [my-agent Archive](../my-agent/README.md) — lessons in scope creep
+
+---
+
+## ✅ Remy Tool-Level File Write Access (Added February 26, 2026)
+
+### Context
+Phase 2.1 gave Dale a `/write` command to write files via a two-step flow. What was missing was Remy having **direct tool-level access** — i.e. the ability to autonomously read, write, and append files as part of natural language tasks (e.g. updating TODO.md, saving notes, checking off items).
+
+### What Was Added
+- [x] **`write_file` tool** — Remy can create or overwrite text files in ~/Projects, ~/Documents, ~/Downloads
+  - Always announces the file path and a summary of changes before writing
+  - Restricted to approved directories; sensitive paths blocked
+- [x] **`append_file` tool** — Remy can append content to existing files without overwriting
+  - Ideal for TODO items, log entries, and incremental notes
+  - Automatically inserts a newline between existing content and new text
+- [x] **`read_file` tool** — already existed; used in combination with write for check-off workflows
+  - Pattern: read_file → replace `[ ]` with `[x]` → write_file with full updated content
+
+### Security Constraints (unchanged from Phase 1)
+- Writes restricted to `~/Projects/`, `~/Documents/`, `~/Downloads/`
+- Sensitive paths (`.env`, `.ssh/`, `.aws/`, `.git/`) explicitly blocked
+- Remy announces intent before every write — no silent modifications
+
+---
+
+## 🐛 Bug: Intermediate "Thinking" Text Leaking into Telegram Chat
+
+### Problem
+When Remy makes multiple tool calls in sequence, any prose written between tool call blocks is rendered as a Telegram message. This causes the intermediate "thinking out loud" text to appear in chat, followed by the final response repeating the same summary — looks like a loop or a glitch.
+
+### User Story
+**As Dale, I want Remy's internal reasoning between tool calls to be suppressed in Telegram, so that only the final response is displayed and the chat doesn't look unhinged.**
+
+### Acceptance Criteria
+- [ ] Intermediate text produced between tool call blocks is NOT sent to Telegram
+- [ ] Intermediate text IS logged (for debugging purposes)
+- [ ] Only the final response after all tool calls complete is sent to Telegram
+- [ ] No change to behaviour for single-tool-call responses
+
+### Proposed Fix (Option 2)
+- Add a `thinking` state to the Telegram message formatter/streamer
+- Text produced while tool calls are in-flight is captured to log only
+- Final response (after all tool results are processed) is sent as normal
+- Likely change is in `bot/handlers.py` or wherever streaming output is assembled before `send_message()`
+
+### Priority
+Low — cosmetic only, nothing is broken
+
+---
+
+## 🐛 Bug: Tool Status Text Leaking into Telegram Messages
+
+- [ ] **Suppress inter-tool TextChunks from being streamed to user**
+  - **Symptom:** Messages like "using list_directory" or "using get_logs" appear in Remy's
+    Telegram replies mid-response, as if they are part of the answer.
+  - **Root cause:** In `bot/handlers.py`, the tool-aware processing loop passes `TextChunk`
+    events directly to `StreamingReply.feed()` regardless of whether they arrive *between*
+    tool calls (i.e. before `ToolTurnComplete` has fired). Claude emits brief status-style
+    text fragments between tool invocations — these should be logged only, not streamed.
+  - **Fix location:** `bot/handlers.py` — tool-aware path (Path A), inside the
+    `async for event in claude_client.stream_with_tools(...)` loop.
+  - **Fix:** Gate `StreamingReply.feed()` on a flag (`in_tool_turn: bool`). Set it `True`
+    on `ToolStatusChunk`, `False` on `ToolTurnComplete`. While `in_tool_turn` is `True`,
+    log `TextChunk.text` at DEBUG level but do NOT feed it to the streamer.
+  - **`streaming.py` is clean** — no changes needed there.
+  - **Test:** Ask Remy to list a directory. Confirm "using list_directory" no longer
+    appears in the Telegram reply. Confirm tool results still appear correctly.
+
+## 🏷️ Pending: Gmail Label Creation
+
+- [ ] **Add `create_gmail_label` tool**
+  - Gap identified: Remy can list and apply labels but cannot create new ones
+  - Implement via Gmail API: `POST /gmail/v1/users/me/labels`
+  - Support nested labels (e.g. `4-Personal & Family/Hockey`) by setting `name` to the full path string
+  - Add tool schema to `TOOL_SCHEMAS` in `tool_registry.py`
+  - Natural language: "create a label called Hockey under Personal & Family"
+  - Use case: on-the-fly label creation during email triage sessions
