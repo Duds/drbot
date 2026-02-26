@@ -51,6 +51,34 @@ MAX_MESSAGE_LENGTH = 10_000  # chars
 MAX_COMMAND_LENGTH = 500     # chars
 MAX_TOPIC_LENGTH = 500       # chars
 
+# ---------------------------------------------------------------------------
+# Sensitive path denylist — enforced inside sanitize_file_path regardless of
+# which allowed_base the resolved path falls under.
+# ---------------------------------------------------------------------------
+
+# Exact directory/file names that are never accessible
+_DENIED_NAMES: frozenset[str] = frozenset({
+    ".env",
+    ".git",
+    ".aws",
+    ".ssh",
+    ".gnupg",
+    ".netrc",
+    ".npmrc",
+    ".pypirc",
+    "client_secrets.json",
+    "credentials.json",
+    "google_token.json",
+    "application_default_credentials.json",
+    "service_account.json",
+})
+
+# File name prefixes that are never accessible (catches .env.local, .env.production …)
+_DENIED_PREFIXES: tuple[str, ...] = (".env",)
+
+# File extensions whose content is typically a private key or certificate
+_DENIED_SUFFIXES: tuple[str, ...] = (".pem", ".key", ".p12", ".pfx", ".cer", ".crt", ".jks")
+
 
 class RateLimiter:
     """
@@ -147,6 +175,17 @@ def sanitize_file_path(path: str, allowed_bases: list[str]) -> tuple[Optional[st
     try:
         # Expand ~ and resolve to absolute path
         resolved = Path(path).expanduser().resolve()
+
+        # Check every component of the resolved path against the denylist.
+        # This runs before the allowed-base check so it can't be bypassed by
+        # placing a symlink to a sensitive file inside an allowed directory.
+        for part in resolved.parts:
+            if part in _DENIED_NAMES:
+                return None, f"Access denied: '{part}' is a protected file or directory"
+            if any(part.startswith(pfx) for pfx in _DENIED_PREFIXES):
+                return None, f"Access denied: '{part}' is a protected file or directory"
+        if resolved.suffix.lower() in _DENIED_SUFFIXES:
+            return None, f"Access denied: '{resolved.name}' has a protected extension"
 
         # Check if it's under an allowed base
         for allowed in allowed_bases:
