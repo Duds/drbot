@@ -106,10 +106,20 @@ class StreamingReply:
     async def _edit_or_skip(self, text: str) -> None:
         """Edit the current message, silently ignoring 'message not modified'."""
         try:
-            await self._message.edit_text(text)
+            await self._message.edit_text(text, parse_mode="Markdown")
             self._last_sent = text
         except BadRequest as e:
-            if "message is not modified" not in str(e).lower():
+            err = str(e).lower()
+            if "message is not modified" in err:
+                return
+            # Partial stream may have unbalanced markdown — retry as plain text
+            if "can't parse" in err or "parse" in err:
+                try:
+                    await self._message.edit_text(text)
+                    self._last_sent = text
+                except BadRequest:
+                    pass
+            else:
                 logger.debug("Telegram BadRequest on edit: %s", e)
         except Exception as e:
             logger.debug("Could not edit message: %s", e)

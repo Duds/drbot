@@ -1870,13 +1870,17 @@ def make_handlers(
 
             # Only edit if there's meaningful new content
             if len(full) > last_edit_len + 50 or final:
+                truncated = candidate[:4000]
                 try:
-                    # Truncate to Telegram's limit; overflow handled by streaming.py
-                    truncated = candidate[:4000]
-                    await sent.edit_text(truncated)
+                    await sent.edit_text(truncated, parse_mode="Markdown")
                     last_edit_len = len(full)
-                except Exception:
-                    pass  # Skip failed edits (no-change, flood control, etc.)
+                except Exception as _md_err:
+                    # Partial stream may have unbalanced markdown — fall back to plain
+                    try:
+                        await sent.edit_text(truncated)
+                        last_edit_len = len(full)
+                    except Exception:
+                        pass  # Skip failed edits (no-change, flood control, etc.)
 
         try:
             async for event in claude_client.stream_with_tools(
@@ -1886,7 +1890,10 @@ def make_handlers(
                 system=system_prompt,
             ):
                 if session_manager.is_cancelled(user_id):
-                    await sent.edit_text("".join(current_display) + "\n\n_[cancelled]_")
+                    await sent.edit_text(
+                        "".join(current_display) + "\n\n_[cancelled]_",
+                        parse_mode="Markdown",
+                    )
                     return
 
                 if isinstance(event, TextChunk):
