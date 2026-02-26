@@ -12,6 +12,7 @@ services:
     volumes:
       - ./data:/app/data
       - ./config:/app/config
+      - ${HOME}/.config/gcloud:/home/drbot/.config/gcloud:ro
     depends_on:
       ollama:
         condition: service_started
