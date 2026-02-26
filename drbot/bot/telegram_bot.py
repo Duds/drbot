@@ -70,6 +70,9 @@ class TelegramBot:
         app.add_handler(
             MessageHandler(filters.VOICE, handlers["voice"])
         )
+        app.add_handler(
+            MessageHandler(filters.PHOTO, handlers["photo"])
+        )
 
     def run(self) -> None:
         """Start the bot (blocking). Use run_polling locally, webhook in Azure."""

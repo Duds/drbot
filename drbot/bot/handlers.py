@@ -12,6 +12,8 @@ Two processing paths for text input:
 from __future__ import annotations
 
 import asyncio
+import base64
+import io
 import json
 import logging
 import os
@@ -2317,6 +2319,128 @@ def make_handlers(
         user_id = update.effective_user.id
         await _process_text_input(user_id, transcript, update, context)
 
+    async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Process photo messages — download, encode to base64, analyse with Claude vision."""
+        if await _reject_unauthorized(update):
+            return
+
+        if claude_client is None:
+            await update.message.reply_text("Image analysis not available (Claude not configured).")
+            return
+
+        user_id = update.effective_user.id
+
+        # Rate limiting
+        allowed, rate_limit_reason = _rate_limiter.is_allowed(user_id)
+        if not allowed:
+            await update.message.reply_text(f"⏱️ {rate_limit_reason}")
+            return
+
+        # Task timeout check
+        if user_id in _task_start_times:
+            elapsed = time.time() - _task_start_times[user_id]
+            if elapsed > TASK_TIMEOUT_SECONDS:
+                _task_start_times.pop(user_id, None)
+                session_manager.request_cancel(user_id)
+                await update.message.reply_text(
+                    "⏰ Previous task exceeded 2-hour limit and was cancelled. Starting fresh."
+                )
+        _task_start_times[user_id] = time.time()
+
+        await update.message.chat.send_action(ChatAction.TYPING)
+
+        # Download highest-resolution version of the photo
+        photo = update.message.photo[-1]
+        caption = update.message.caption or ""
+        user_text = caption if caption else "What is this image?"
+
+        try:
+            photo_file = await photo.get_file()
+            bio = io.BytesIO()
+            await photo_file.download_to_memory(bio)
+            image_bytes = bio.getvalue()
+        except Exception as exc:
+            logger.error("Failed to download photo for user %d: %s", user_id, exc)
+            await update.message.reply_text("❌ Could not download photo.")
+            _task_start_times.pop(user_id, None)
+            return
+
+        image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+
+        await _ensure_user(update.effective_user)
+        async with session_manager.get_lock(user_id):
+            session_manager.clear_cancel(user_id)
+            session_key = SessionManager.get_session_key(user_id)
+
+            # Build history from conv_store
+            recent = await conv_store.get_recent_turns(user_id, session_key, limit=20)
+            messages = [_build_message_from_turn(t) for t in recent]
+            # Strip orphaned tool-turn fragments from the start of history
+            while messages:
+                first = messages[0]
+                if first["role"] == "user" and isinstance(first["content"], str):
+                    break
+                messages.pop(0)
+
+            # Append the image message as a multi-block content list
+            messages.append({
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/jpeg",
+                            "data": image_b64,
+                        },
+                    },
+                    {"type": "text", "text": user_text},
+                ],
+            })
+
+            # Save user turn as text-only — do NOT store image bytes in history
+            history_text = f"[photo] {caption}" if caption else "[photo]"
+            user_turn = ConversationTurn(role="user", content=history_text)
+            await conv_store.append_turn(user_id, session_key, user_turn)
+
+            # Build system prompt with memory injection
+            system_prompt = settings.soul_md
+            if memory_injector is not None:
+                try:
+                    system_prompt = await memory_injector.build_system_prompt(
+                        user_id, user_text, settings.soul_md
+                    )
+                    system_prompt = sanitize_memory_injection(system_prompt)
+                except Exception as e:
+                    logger.warning("Memory injection failed, using base prompt: %s", e)
+
+            # Send placeholder message to stream into
+            sent = await update.message.reply_text("…")
+
+            if tool_registry is not None and claude_client is not None:
+                await _stream_with_tools_path(
+                    user_id=user_id,
+                    text=user_text,
+                    messages=messages,
+                    system_prompt=system_prompt,
+                    session_key=session_key,
+                    sent=sent,
+                )
+            else:
+                # Path B fallback: router (won't use image block but won't crash)
+                try:
+                    await stream_to_telegram(
+                        chunks=router.stream(user_text, messages, user_id, system=system_prompt),
+                        initial_message=sent,
+                        session_manager=session_manager,
+                        user_id=user_id,
+                    )
+                except Exception as exc:
+                    logger.error("Error processing photo for user %d: %s", user_id, exc)
+                    await sent.edit_text(f"❌ Sorry, something went wrong: {exc}")
+
+            _task_start_times.pop(user_id, None)
+
     return {
         "start": start_command,
         "help": help_command,
@@ -2370,4 +2494,5 @@ def make_handlers(
         "retrospective": retrospective_command,
         "message": handle_message,
         "voice": handle_voice,
+        "photo": handle_photo,
     }
