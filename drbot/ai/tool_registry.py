@@ -82,6 +82,24 @@ _DOW_NAMES = {
 
 TOOL_SCHEMAS: list[dict] = [
     # ------------------------------------------------------------------ #
+    # Time                                                                 #
+    # ------------------------------------------------------------------ #
+    {
+        "name": "get_current_time",
+        "description": (
+            "Return the current date and time in Dale's timezone (Australia/Canberra). "
+            "Call this whenever you need to know today's date, the current time, "
+            "the day of the week, or how far away a date is. "
+            "Do not guess or rely on training data for the current date — always call this tool."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
+
+    # ------------------------------------------------------------------ #
     # Memory / status                                                      #
     # ------------------------------------------------------------------ #
     {
@@ -901,8 +919,11 @@ class ToolRegistry:
         Returns a string result suitable for feeding back as a tool_result block.
         """
         try:
+            # Time
+            if tool_name == "get_current_time":
+                return self._exec_get_current_time()
             # Memory / status
-            if tool_name == "get_logs":
+            elif tool_name == "get_logs":
                 return await self._exec_get_logs(tool_input)
             elif tool_name == "get_goals":
                 return await self._exec_get_goals(tool_input, user_id)
@@ -976,6 +997,22 @@ class ToolRegistry:
         except Exception as exc:
             logger.error("Tool %s failed: %s", tool_name, exc, exc_info=True)
             return f"Tool {tool_name} encountered an error: {exc}"
+
+    # ------------------------------------------------------------------ #
+    # Time / date executor                                                 #
+    # ------------------------------------------------------------------ #
+
+    def _exec_get_current_time(self) -> str:
+        from datetime import datetime
+        import zoneinfo
+        tz = zoneinfo.ZoneInfo("Australia/Canberra")
+        now = datetime.now(tz)
+        return (
+            f"Current date/time in Australia/Canberra:\n"
+            f"  Date: {now.strftime('%A, %d %B %Y')}\n"
+            f"  Time: {now.strftime('%I:%M %p')} ({now.strftime('%H:%M')} 24h)\n"
+            f"  ISO:  {now.isoformat()}"
+        )
 
     # ------------------------------------------------------------------ #
     # Memory / status executors                                            #
