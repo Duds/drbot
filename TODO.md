@@ -150,6 +150,14 @@ This is a **cherry-pick from my-agent** (which had partial support) but implemen
   - User reply intercepted in message handler (same pattern as `/write`)
   - Note: `/email` send deferred — security risk for now
 
+- [ ] **Gmail label/folder support** *(feature request)*
+  - Current search only queries the default inbox view; emails in Promotions, All Mail,
+    or custom labels are invisible to Remy even when unread
+  - Extend `GmailClient` to accept a `label` parameter (e.g. `label:all`, `label:promotions`)
+  - Natural language: "search all my mail for emails from Kathryn about hockey"
+  - Tool schema update: add optional `labels` field to `search_gmail` tool
+  - Suggested labels to support: `INBOX`, `ALL_MAIL`, `PROMOTIONS`, `UPDATES`, `FORUMS`
+
 ### 3.3 Google Docs Integration (Minimal)
 - [x] **Read shared documents**
   - `/gdoc <doc-id-or-url>` — accepts full URL or bare document ID
