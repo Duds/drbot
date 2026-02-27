@@ -650,8 +650,11 @@ if __name__ == "__main__":
     _db_path = Path(args.db)
     _db_path.parent.mkdir(parents=True, exist_ok=True)
 
+    mcp.settings.host = args.host
+    mcp.settings.port = args.port
+
     print(f"relay_mcp starting on http://{args.host}:{args.port}", file=sys.stderr)
     print(f"Database: {_db_path}", file=sys.stderr)
     print(f"Known agents: {', '.join(KNOWN_AGENTS)}", file=sys.stderr)
 
-    mcp.run(transport="streamable-http", host=args.host, port=args.port)
+    mcp.run(transport="streamable-http")
