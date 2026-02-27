@@ -102,10 +102,6 @@ class MemoryInjector:
         # For now, we'll just fall back to recent items
         return await self._knowledge.get_by_type(user_id, entity_type, limit=limit)
 
-    async def _get_by_ids(self, user_id: int, ids: list[int]) -> list:
-        # Implementation of fetching KnowledgeItems by IDs
-        pass
-
     async def _get_by_ids(self, user_id: int, ids: list[int]) -> list[KnowledgeItem]:
         placeholders = ",".join("?" * len(ids))
         async with self._db.get_connection() as conn:

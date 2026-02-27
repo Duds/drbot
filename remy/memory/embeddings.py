@@ -8,6 +8,8 @@ Falls back gracefully to FTS5 search when sqlite-vec is unavailable.
 
 import asyncio
 import logging
+import os
+import threading
 from typing import Any
 
 from .database import SQLITE_VEC_AVAILABLE, DatabaseManager
@@ -17,22 +19,48 @@ logger = logging.getLogger(__name__)
 _MODEL_NAME = "all-MiniLM-L6-v2"
 _EMBEDDING_DIM = 384
 
+# Module-level singleton + lock: prevents concurrent model initialisation from
+# the thread executor, which causes "Artifact already registered" errors in the
+# HuggingFace tokenizers library when two threads try to load the same
+# precompiled tokenizer simultaneously.
+_model_instance = None
+_model_lock = threading.Lock()
+
+# Keep the torch inductor cache in a persistent user directory rather than
+# /tmp, which can fill up and break the precompile step entirely.
+os.environ.setdefault(
+    "TORCHINDUCTOR_CACHE_DIR",
+    os.path.expanduser("~/.cache/torch/inductor"),
+)
+
+
+def _load_model() -> "SentenceTransformer":  # noqa: F821
+    """Load and warm up the SentenceTransformer (must be called under _model_lock)."""
+    from sentence_transformers import SentenceTransformer
+
+    logger.info("Loading SentenceTransformer model: %s …", _MODEL_NAME)
+    model = SentenceTransformer(_MODEL_NAME)
+    # Warm-up: trigger any JIT / tokenizer precompilation now, while we still
+    # hold the lock, so concurrent callers never race during first-use compile.
+    model.encode("warmup", normalize_embeddings=True)
+    logger.info("Model loaded and warmed up")
+    return model
+
 
 class EmbeddingStore:
     """Manages text embeddings in SQLite using sqlite-vec for ANN search."""
 
     def __init__(self, db: DatabaseManager) -> None:
         self._db = db
-        self._model = None  # lazy-loaded
 
     def _get_model(self):
-        """Lazy-load SentenceTransformer on first access."""
-        if self._model is None:
-            from sentence_transformers import SentenceTransformer
-            logger.info("Loading SentenceTransformer model: %s …", _MODEL_NAME)
-            self._model = SentenceTransformer(_MODEL_NAME)
-            logger.info("Model loaded")
-        return self._model
+        """Return the module-level SentenceTransformer singleton (thread-safe)."""
+        global _model_instance
+        if _model_instance is None:
+            with _model_lock:
+                if _model_instance is None:  # double-checked locking
+                    _model_instance = _load_model()
+        return _model_instance
 
     async def embed(self, text: str) -> list[float]:
         """Return a float32 embedding vector for `text` (runs in thread executor)."""
