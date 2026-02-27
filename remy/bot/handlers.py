@@ -249,8 +249,16 @@ def make_handlers(
         except Exception:
             ollama_status = "offline"
 
+        # Check other models
+        from ..ai.mistral_client import MistralClient
+        from ..ai.moonshot_client import MoonshotClient
+        mistral_ok = await MistralClient().is_available()
+        moonshot_ok = await MoonshotClient().is_available()
+
         await update.message.reply_text(
             f"Claude: configured ({settings.model_complex})\n"
+            f"Mistral: {'online' if mistral_ok else 'offline / not configured'}\n"
+            f"Moonshot: {'online' if moonshot_ok else 'offline / not configured'}\n"
             f"Ollama: {ollama_status}\n"
             f"Environment: {'Azure' if settings.azure_environment else 'local'}"
         )

@@ -13,6 +13,8 @@ from ..config import settings
 from ..exceptions import ServiceUnavailableError
 from .classifier import MessageClassifier
 from .claude_client import ClaudeClient
+from .mistral_client import MistralClient
+from .moonshot_client import MoonshotClient
 from .ollama_client import OllamaClient
 
 logger = logging.getLogger(__name__)
@@ -20,16 +22,20 @@ logger = logging.getLogger(__name__)
 
 class ModelRouter:
     """
-    Routes messages to the appropriate model and client.
-    Provides automatic fallback to Ollama when Claude is unavailable.
+    Routes messages to the appropriate model based on task category and context.
+    Orchestrates between Claude, Mistral, Moonshot, and Ollama.
     """
 
     def __init__(
         self,
         claude_client: ClaudeClient,
+        mistral_client: MistralClient,
+        moonshot_client: MoonshotClient,
         ollama_client: OllamaClient,
     ) -> None:
         self._claude = claude_client
+        self._mistral = mistral_client
+        self._moonshot = moonshot_client
         self._ollama = ollama_client
         self._classifier = MessageClassifier(claude_client=claude_client)
 
@@ -41,34 +47,86 @@ class ModelRouter:
         system: str | None = None,
     ) -> AsyncIterator[str]:
         """
-        Classify the message, select a model, and stream the response.
-        Falls back to Ollama if Claude is unavailable.
-        `system` overrides the default SOUL.md system prompt (used for memory injection).
+        Classify, route, and stream the response.
         """
-        classification = await self._classifier.classify(text)
+        category = await self._classifier.classify(text)
+        
+        # Approximate context length (characters / 4 as a rough token heuristic)
+        total_chars = sum(len(m.get("content", "")) for m in messages)
+        if system:
+            total_chars += len(system)
+        approx_tokens = total_chars // 4
 
-        model = (
-            settings.model_simple if classification == "simple" else settings.model_complex
+        logger.info(
+            "Routing task: category=%s, approx_tokens=%d (user %d)",
+            category, approx_tokens, user_id
         )
-        logger.info("Routing to Claude %s (user %d)", model, user_id)
 
-        async for chunk in self._stream_with_fallback(messages, model, system=system):
-            yield chunk
+        # Mapping logic from model_orchestration_refactor.md
+        if category == "routine":
+            if approx_tokens < 50000:
+                async for chunk in self._stream_with_fallback("mistral", messages, model=settings.mistral_model_medium):
+                    yield chunk
+            else:
+                async for chunk in self._stream_with_fallback("claude", messages, model=settings.model_simple, system=system):
+                    yield chunk
+
+        elif category == "summarization":
+            if approx_tokens < 100000:
+                async for chunk in self._stream_with_fallback("claude", messages, model=settings.model_simple, system=system):
+                    yield chunk
+            else:
+                async for chunk in self._stream_with_fallback("mistral", messages, model=settings.mistral_model_large):
+                    yield chunk
+
+        elif category == "reasoning":
+            if approx_tokens > 128000:
+                async for chunk in self._stream_with_fallback("moonshot", messages, model=settings.moonshot_model_k2_thinking):
+                    yield chunk
+            else:
+                async for chunk in self._stream_with_fallback("claude", messages, model=settings.model_complex, system=system):
+                    yield chunk
+
+        elif category == "coding":
+            if approx_tokens < 128000:
+                async for chunk in self._stream_with_fallback("claude", messages, model=settings.model_complex, system=system):
+                    yield chunk
+            else:
+                async for chunk in self._stream_with_fallback("moonshot", messages, model=settings.moonshot_model_k2_thinking):
+                    yield chunk
+
+        elif category == "safety":
+            async for chunk in self._stream_with_fallback("claude", messages, model=settings.model_complex, system=system):
+                yield chunk
+
+        elif category == "persona":
+            async for chunk in self._stream_with_fallback("moonshot", messages, model=settings.moonshot_model_v1):
+                yield chunk
+
+        else:
+            async for chunk in self._stream_with_fallback("claude", messages, model=settings.model_complex, system=system):
+                yield chunk
 
     async def _stream_with_fallback(
-        self, messages: list[dict], model: str, system: str | None = None
+        self, provider: str, messages: list[dict], model: str | None = None, system: str | None = None
     ) -> AsyncIterator[str]:
-        """Try Claude; fall back to Ollama on 5xx or rate-limit errors."""
+        """Try a cloud provider; fall back to Ollama on failure."""
         try:
-            async for chunk in self._claude.stream_message(messages, model=model, system=system):
-                yield chunk
-        except (anthropic.RateLimitError, anthropic.APIStatusError) as e:
-            logger.warning("Claude unavailable (%s). Falling back to Ollama.", e)
+            if provider == "claude":
+                async for chunk in self._claude.stream_message(messages, model=model, system=system):
+                    yield chunk
+            elif provider == "mistral":
+                async for chunk in self._mistral.stream_chat(messages, model=model):
+                    yield chunk
+            elif provider == "moonshot":
+                async for chunk in self._moonshot.stream_chat(messages, model=model):
+                    yield chunk
+        except Exception as e:
+            logger.warning("%s unavailable (%s). Falling back to Ollama.", provider.capitalize(), e)
             if not await self._ollama.is_available():
                 raise ServiceUnavailableError(
-                    "Both Claude and Ollama are unavailable. Please try again later."
+                    f"Both {provider.capitalize()} and Ollama are unavailable. Please try again later."
                 )
-            # Notify the user that we've fallen back to the local model
-            yield "\n⚠️ _Claude unavailable — responding via local Ollama model_\n\n"
+            yield f"\n⚠️ _{provider.capitalize()} unavailable — responding via local Ollama model_\n\n"
             async for chunk in self._ollama.stream_chat(messages):
                 yield chunk

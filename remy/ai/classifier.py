@@ -35,36 +35,43 @@ _SIMPLE_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 
-ClassificationResult = Literal["simple", "complex"]
+ClassificationResult = Literal[
+    "routine",         # Short interactive messages, greetings
+    "summarization",   # Email summaries, doc summaries
+    "reasoning",       # Planning, multi-step tasks, board analysis
+    "safety",          # File writes, financial actions (if any)
+    "coding",          # Scripting, code generation
+    "persona",         # Roleplay
+]
 
 
 class MessageClassifier:
-    """Classify messages as 'simple' (cheap model) or 'complex' (powerful model)."""
+    """Classify messages into categories for optimal model routing."""
 
     def __init__(self, claude_client=None) -> None:
         # claude_client injected to avoid circular imports; used only for ambiguous cases
         self._claude = claude_client
 
     async def classify(self, text: str) -> ClassificationResult:
-        """Return 'simple' or 'complex' for the given message text."""
+        """Return a task category for the given message text."""
         stripped = text.strip()
 
-        # Fast-path: obvious simple cases
+        # Fast-path: obvious routine cases
         if len(stripped) < 80 and _SIMPLE_PATTERNS.match(stripped):
-            logger.debug("Classifier: simple (greeting fast-path)")
-            return "simple"
+            logger.debug("Classifier: routine (greeting fast-path)")
+            return "routine"
 
-        # Fast-path: obvious complex cases
+        # Fast-path: obvious coding cases
         if _COMPLEX_PATTERNS.search(stripped):
-            logger.debug("Classifier: complex (keyword match)")
-            return "complex"
+            logger.debug("Classifier: coding (keyword match)")
+            return "coding"
 
-        # Fast-path: short messages with no complexity signals
+        # Fast-path: short messages defaults to routine
         if len(stripped) < 100:
-            logger.debug("Classifier: simple (short, no complex keywords)")
-            return "simple"
+            logger.debug("Classifier: routine (short, no specific complex keywords)")
+            return "routine"
 
-        # Ambiguous: ask Haiku for a 2-token decision
+        # Ambiguous: ask Haiku for a granular decision
         if self._claude is not None:
             try:
                 result = await self._claude.complete(
@@ -72,26 +79,37 @@ class MessageClassifier:
                         {
                             "role": "user",
                             "content": (
-                                f"Classify this message as SIMPLE or COMPLEX.\n"
-                                f"SIMPLE: casual chat, greetings, short questions.\n"
-                                f"COMPLEX: coding, file creation, multi-step tasks, analysis.\n"
-                                f"Reply with ONLY the word SIMPLE or COMPLEX.\n\n"
-                                f'Message: """{stripped[:400]}"""'
+                                f"Classify this message into ONE category:\n"
+                                f"ROUTINE: casual chat, greetings, short questions.\n"
+                                f"SUMMARIZATION: asking to summarize text, emails, or documents.\n"
+                                f"REASONING: complex planning, multi-step tasks, deep analysis.\n"
+                                f"SAFETY: requesting system changes, file writes, or sensitive actions.\n"
+                                f"CODING: writing or fixing code, scripts, or technical tasks.\n"
+                                f"PERSONA: roleplay or specific character interaction.\n\n"
+                                f"Reply with ONLY the category name.\n\n"
+                                f'Message: """{stripped[:800]}"""'
                             ),
                         }
                     ],
                     model=None,  # uses settings.model_simple (Haiku)
-                    system="You are a message classifier. Reply only with SIMPLE or COMPLEX.",
-                    max_tokens=5,
+                    system="You are an intent classifier. Reply only with the category name.",
+                    max_tokens=10,
                 )
                 classification = result.strip().upper()
-                if "COMPLEX" in classification:
-                    logger.debug("Classifier: complex (haiku decision)")
-                    return "complex"
-                logger.debug("Classifier: simple (haiku decision)")
-                return "simple"
+                if "SUMMARIZATION" in classification:
+                    return "summarization"
+                if "REASONING" in classification:
+                    return "reasoning"
+                if "SAFETY" in classification:
+                    return "safety"
+                if "CODING" in classification:
+                    return "coding"
+                if "PERSONA" in classification:
+                    return "persona"
+                
+                return "routine"
             except Exception as e:
-                logger.warning("Classifier haiku call failed: %s", e)
+                logger.warning("Classifier granular call failed: %s", e)
 
-        # Default to complex when uncertain (better to over-use capable model)
-        return "complex"
+        # Default to reasoning when uncertain (safe bet for capable models)
+        return "reasoning"

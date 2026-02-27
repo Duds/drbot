@@ -417,8 +417,9 @@ These were in my-agent and caused bloat. **Do not implement.**
 | **C**    | Context-aware reminders (snooze, dedup)                            | US-context-aware-reminders          | ⬜ P3 (deferred)             |
 | **C**    | SMS ingestion via Android webhook                                  | US-sms-ingestion                    | ⬜ P3 (new infra)            |
 | **C**    | Google Wallet transaction alerts                                   | US-google-wallet-monitoring         | ⬜ P3 (needs SMS first)      |
-| **W**    | Claude Agent SDK subagents                                         | US-claude-agent-sdk-subagents       | ⬜ Deferred (major refactor) |
-| **W**    | Gmail send                                                         | —                                   | ⬜ Deferred (security)       |
+| **S**    | Multi-Model Orchestration (Mistral, Moonshot)                      | US-model-orchestration              | ⬜ P1                        |
+| **S**    | Claude Agent SDK subagents                                         | US-claude-agent-sdk-subagents       | ⬜ Deferred (major refactor) |
+| **S**    | Gmail send                                                         | —                                   | ⬜ Deferred (security)       |
 | **W**    | Headless browser automation                                        | —                                   | ❌ Avoid                     |
 | **W**    | Knowledge graph + vector store                                     | —                                   | ❌ Avoid                     |
 

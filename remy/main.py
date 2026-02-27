@@ -10,6 +10,8 @@ import signal
 
 from .agents.orchestrator import BoardOrchestrator
 from .ai.claude_client import ClaudeClient
+from .ai.mistral_client import MistralClient
+from .ai.moonshot_client import MoonshotClient
 from .ai.ollama_client import OllamaClient
 from .ai.router import ModelRouter
 from .ai.tool_registry import ToolRegistry
@@ -77,8 +79,10 @@ def main() -> None:
 
     # Initialise AI components
     claude_client = ClaudeClient()
+    mistral_client = MistralClient()
+    moonshot_client = MoonshotClient()
     ollama_client = OllamaClient()
-    router = ModelRouter(claude_client, ollama_client)
+    router = ModelRouter(claude_client, mistral_client, moonshot_client, ollama_client)
     session_manager = SessionManager()
     conv_store = ConversationStore(settings.sessions_dir)
 

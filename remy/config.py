@@ -51,6 +51,17 @@ class Settings(BaseSettings):
     model_complex: str = "claude-sonnet-4-6"
     anthropic_max_tokens: int = 4096
 
+    # Mistral AI
+    mistral_api_key: str = ""
+    mistral_model_medium: str = "mistral-medium-latest"
+    mistral_model_large: str = "mistral-large-latest"
+
+    # Moonshot AI
+    moonshot_api_key: str = ""
+    moonshot_model_v1: str = "moonshot-v1-8k"
+    moonshot_model_v1_128k: str = "moonshot-v1-128k"
+    moonshot_model_k2_thinking: str = "moonshot-k2-thinking"
+
     # Ollama fallback
     ollama_base_url: str = "http://localhost:11434"
     ollama_fallback_model: str = "llama3:latest"

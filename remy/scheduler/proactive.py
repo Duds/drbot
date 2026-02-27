@@ -245,17 +245,26 @@ class ProactiveScheduler:
         self, automation_id: int, user_id: int, label: str, one_time: bool = False
     ) -> None:
         """Fire a user-defined automation: send a reminder Telegram message."""
+        logger.info(
+            "Automation %d dispatching (one_time=%s, label=%r)", automation_id, one_time, label
+        )
         chat_id = _read_primary_chat_id()
         if chat_id is None:
-            logger.debug("Automation %d skipped — no primary chat ID set", automation_id)
+            logger.warning(
+                "Automation %d skipped — primary_chat_id.txt not found. "
+                "Run /setmychat in Telegram to register a chat.",
+                automation_id,
+            )
             return
+
+        logger.info("Automation %d firing to chat %d", automation_id, chat_id)
 
         # Perform DB cleanup BEFORE sending to avoid double-firing on crashes
         if self._automation_store is not None:
             if one_time:
                 try:
                     await self._automation_store.delete(automation_id)
-                    logger.debug("Deleted one-time automation %d before firing", automation_id)
+                    logger.info("Deleted one-time automation %d before firing", automation_id)
                 except Exception as e:
                     logger.warning(
                         "Could not delete one-time automation %d: %s", automation_id, e,
@@ -274,6 +283,7 @@ class ProactiveScheduler:
         """Send a message, swallowing errors so a bad send never kills the scheduler."""
         try:
             await self._bot.send_message(chat_id=chat_id, text=text, parse_mode="Markdown")
+            logger.info("Proactive send succeeded (chat %d, %d chars)", chat_id, len(text))
         except Exception as e:
             logger.warning("Proactive send failed (chat %d): %s", chat_id, e)
 
