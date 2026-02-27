@@ -37,6 +37,7 @@ Tools available:
 
   Automations (Phase 5)
     schedule_reminder     → create a daily or weekly reminder
+    set_one_time_reminder → create a one-time reminder at a specific datetime
     list_reminders        → show all scheduled reminders
     remove_reminder       → remove a reminder by ID
     breakdown_task        → break a task into 5 actionable steps
@@ -52,6 +53,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -769,6 +771,32 @@ TOOL_SCHEMAS: list[dict] = [
         },
     },
     {
+        "name": "set_one_time_reminder",
+        "description": (
+            "Set a one-time reminder that fires at a specific date and time. "
+            "Use this when the user says 'remind me in 10 minutes', 'remind me at 3pm', "
+            "'remind me tomorrow morning', etc. "
+            "Compute the absolute local datetime from the current time and pass it as fire_at."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "label": {
+                    "type": "string",
+                    "description": "The reminder message to deliver.",
+                },
+                "fire_at": {
+                    "type": "string",
+                    "description": (
+                        "ISO 8601 datetime when to deliver the reminder, "
+                        "e.g. '2026-02-27T15:30:00'. Use local time (AEST/AEDT)."
+                    ),
+                },
+            },
+            "required": ["label", "fire_at"],
+        },
+    },
+    {
         "name": "breakdown_task",
         "description": (
             "Break a task or project into 5 clear, actionable steps. "
@@ -1061,6 +1089,8 @@ class ToolRegistry:
                 return await self._exec_list_reminders(user_id)
             elif tool_name == "remove_reminder":
                 return await self._exec_remove_reminder(tool_input, user_id)
+            elif tool_name == "set_one_time_reminder":
+                return await self._exec_set_one_time_reminder(tool_input, user_id)
             elif tool_name == "breakdown_task":
                 return await self._exec_breakdown_task(tool_input)
             # Memory management
@@ -1820,12 +1850,19 @@ class ToolRegistry:
 
         lines = [f"Scheduled reminders ({len(rows)}):"]
         for row in rows:
-            cron_parts = row["cron"].split()
-            minute, hour, _, _, dow = cron_parts
-            time_fmt = f"{int(hour):02d}:{int(minute):02d}"
-            freq = "daily" if dow == "*" else f"every {_DOW_NAMES.get(dow, dow)}"
             last = row["last_run_at"] or "never"
-            lines.append(f"[ID {row['id']}] '{row['label']}' — {freq} at {time_fmt} | last run: {last}")
+            if row.get("fire_at"):
+                lines.append(
+                    f"[ID {row['id']}] '{row['label']}' — once at {row['fire_at']}"
+                )
+            else:
+                cron_parts = row["cron"].split()
+                minute, hour, _, _, dow = cron_parts
+                time_fmt = f"{int(hour):02d}:{int(minute):02d}"
+                freq = "daily" if dow == "*" else f"every {_DOW_NAMES.get(dow, dow)}"
+                lines.append(
+                    f"[ID {row['id']}] '{row['label']}' — {freq} at {time_fmt} | last run: {last}"
+                )
 
         return "\n".join(lines)
 
@@ -1846,6 +1883,58 @@ class ToolRegistry:
             sched.remove_automation(reminder_id)
 
         return f"✅ Reminder {reminder_id} removed."
+
+    async def _exec_set_one_time_reminder(self, inp: dict, user_id: int) -> str:
+        if self._automation_store is None:
+            return "Automation store not available."
+
+        label = inp.get("label", "").strip()
+        fire_at_str = inp.get("fire_at", "").strip()
+
+        if not label:
+            return "Please provide a label for the reminder."
+        if not fire_at_str:
+            return "Please provide a fire_at datetime."
+
+        try:
+            fire_dt = datetime.fromisoformat(fire_at_str)
+        except ValueError:
+            return (
+                f"Invalid fire_at format: {fire_at_str!r}. "
+                "Use ISO 8601, e.g. '2026-02-27T15:30:00'."
+            )
+
+        # Reject past datetimes (treat naive datetimes as UTC+10 / AEST)
+        if fire_dt.tzinfo is None:
+            fire_dt_utc = fire_dt.replace(tzinfo=timezone.utc).replace(
+                hour=(fire_dt.hour - 10) % 24
+            )
+        else:
+            fire_dt_utc = fire_dt.astimezone(timezone.utc)
+
+        if fire_dt_utc <= datetime.now(timezone.utc):
+            return "That time is already in the past. Please provide a future datetime."
+
+        try:
+            automation_id = await self._automation_store.add(
+                user_id, label, cron="", fire_at=fire_at_str
+            )
+        except Exception as e:
+            return f"Failed to save reminder: {e}"
+
+        sched = self._scheduler_ref.get("proactive_scheduler")
+        if sched is not None:
+            sched.add_automation(automation_id, user_id, label, cron="", fire_at=fire_at_str)
+
+        try:
+            display_time = fire_dt.strftime("%a %d %b at %H:%M")
+        except Exception:
+            display_time = fire_at_str
+
+        return (
+            f"✅ One-time reminder set (ID {automation_id}): '{label}'\n"
+            f"Fires {display_time}."
+        )
 
     async def _exec_breakdown_task(self, inp: dict) -> str:
         task = inp.get("task", "").strip()

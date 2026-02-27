@@ -121,7 +121,7 @@ class Settings(BaseSettings):
             with open(self.soul_md_path, encoding="utf-8") as f:
                 return f.read().strip()
         except FileNotFoundError:
-            return "You are drbot, a personal AI assistant. Be helpful, concise, and honest."
+            return "You are Remy, a personal AI assistant. Be helpful, concise, and honest."
 
 
 def get_settings() -> "Settings":

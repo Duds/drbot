@@ -115,6 +115,13 @@ CREATE VIRTUAL TABLE IF NOT EXISTS goals_fts USING fts5(
 );
 """
 
+# Schema migrations applied after the main DDL.
+# Each entry is attempted once; OperationalError means the column already exists.
+_MIGRATIONS = [
+    # 001: one-time reminder support
+    "ALTER TABLE automations ADD COLUMN fire_at TEXT;",
+]
+
 # Triggers to keep FTS indices in sync with source tables
 _FTS_TRIGGERS = """
 CREATE TRIGGER IF NOT EXISTS facts_ai AFTER INSERT ON facts BEGIN
@@ -185,6 +192,14 @@ class DatabaseManager:
             except Exception as e:
                 logger.warning("Could not create embeddings_vec table: %s", e)
                 SQLITE_VEC_AVAILABLE = False
+
+        # Run incremental migrations (idempotent — errors mean already applied)
+        for migration_sql in _MIGRATIONS:
+            try:
+                await self._conn.execute(migration_sql)
+                await self._conn.commit()
+            except Exception:
+                pass  # Column/index already exists
 
         await self._conn.commit()
         logger.info("Database initialised: %s", self.db_path)

@@ -26,6 +26,7 @@ from telegram import Update
 from telegram.constants import ChatAction
 from telegram.ext import ContextTypes
 
+from ..agents.background import BackgroundTaskRunner
 from ..ai.claude_client import TextChunk, ToolResultChunk, ToolStatusChunk, ToolTurnComplete
 from ..ai.input_validator import (
     RateLimiter,
@@ -141,7 +142,7 @@ def make_handlers(
         if await _reject_unauthorized(update):
             return
         await update.message.reply_text(
-            "drbot online.\n\n"
+            "Remy online.\n\n"
             "Commands:\n"
             "  /help      — show this list\n"
             "  /cancel    — stop current task\n"
@@ -1499,8 +1500,8 @@ def make_handlers(
         """
         /board <topic> — convene the Board of Directors on a topic.
 
-        Runs Strategy → Content → Finance → Researcher → Critic sequentially,
-        sending each section to the user as it completes (streaming via edits).
+        Acknowledges immediately and runs agents in the background, delivering
+        the full result as a new message when complete.
         """
         if await _reject_unauthorized(update):
             return
@@ -1525,11 +1526,9 @@ def make_handlers(
         user_context = ""
         if memory_injector is not None:
             try:
-                # Build just the memory XML block (without SOUL.md wrapper)
                 full_prompt = await memory_injector.build_system_prompt(
                     user_id, topic, ""
                 )
-                # Extract the <memory> block if present
                 if "<memory>" in full_prompt:
                     start = full_prompt.index("<memory>")
                     end = full_prompt.index("</memory>") + len("</memory>")
@@ -1537,49 +1536,17 @@ def make_handlers(
             except Exception as exc:
                 logger.warning("Board memory injection failed: %s", exc)
 
-        # Send intro message — we'll keep sending new messages per agent section
-        await update.message.chat.send_action(ChatAction.TYPING)
-        header_msg = await update.message.reply_text(
-            f"🏛 *Board of Directors convened*\n_Topic: {topic}_\n\nRunning agents…",
-            parse_mode="Markdown",
-        )
+        # Acknowledge immediately and release the session lock
+        await update.message.reply_text("Started — I'll message you when done 🔄")
 
-        # Collect sections and send each as it arrives
-        current_msg = header_msg
-        current_text = header_msg.text or ""
+        async def _collect_board() -> str:
+            chunks = [f"🏛 *Board of Directors: {topic}*\n\n"]
+            async for chunk in board_orchestrator.run_board_streaming(topic, user_context):
+                chunks.append(chunk)
+            return "".join(chunks)
 
-        async with session_manager.get_lock(user_id):
-            session_manager.clear_cancel(user_id)
-
-            try:
-                async for chunk in board_orchestrator.run_board_streaming(
-                    topic, user_context
-                ):
-                    if session_manager.is_cancelled(user_id):
-                        await current_msg.reply_text("Board session cancelled.")
-                        return
-
-                    candidate = current_text + chunk
-
-                    if len(candidate) <= 4000:
-                        # Edit the current message
-                        try:
-                            await current_msg.edit_text(
-                                candidate, parse_mode="Markdown"
-                            )
-                            current_text = candidate
-                        except Exception as edit_err:
-                            logger.debug("Edit failed (likely no change): %s", edit_err)
-                    else:
-                        # Overflow: start a new message with this chunk
-                        current_msg = await current_msg.reply_text(
-                            chunk, parse_mode="Markdown"
-                        )
-                        current_text = chunk
-
-            except Exception as exc:
-                logger.error("Board orchestrator error for user %d: %s", user_id, exc)
-                await current_msg.reply_text(f"Board session failed: {exc}")
+        runner = BackgroundTaskRunner(context.bot, update.message.chat_id)
+        asyncio.create_task(runner.run(_collect_board(), label="board analysis"))
 
     # ------------------------------------------------------------------ #
     # Phase 5: Task automation commands                                     #
@@ -1889,7 +1856,7 @@ def make_handlers(
             await sent.edit_text(f"❌ Could not load goal status: {exc}")
 
     async def retrospective_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """/retrospective — generate a monthly retrospective using Claude."""
+        """/retrospective — generate a monthly retrospective using Claude (fire-and-forget)."""
         if await _reject_unauthorized(update):
             return
         if conversation_analyzer is None:
@@ -1900,18 +1867,15 @@ def make_handlers(
             return
 
         user_id = update.effective_user.id
-        await update.message.chat.send_action(ChatAction.TYPING)
-        sent = await update.message.reply_text("Generating retrospective…")
-        try:
-            retro = await conversation_analyzer.generate_retrospective(
+        await update.message.reply_text("Started — I'll message you when done 🔄")
+
+        async def _run_retrospective() -> str:
+            return await conversation_analyzer.generate_retrospective(
                 user_id, "month", claude_client
             )
-            if len(retro) > 4000:
-                retro = retro[:4000] + "…"
-            await sent.edit_text(retro, parse_mode="Markdown")
-        except Exception as exc:
-            logger.error("Retrospective command failed for user %d: %s", user_id, exc)
-            await sent.edit_text(f"❌ Could not generate retrospective: {exc}")
+
+        runner = BackgroundTaskRunner(context.bot, update.message.chat_id)
+        asyncio.create_task(runner.run(_run_retrospective(), label="retrospective"))
 
     # ------------------------------------------------------------------ #
     # Message handler                                                       #

@@ -39,13 +39,32 @@ Anything else relevant: workarounds, frequency, environment quirks.
 
 ---
 
-## Open Bugs
+## Closed Bugs
 
-*(none)*
+### BUG-002 — Reminders created mid-session are not fired by the scheduler
+
+| Field | Value |
+|---|---|
+| **Date** | 2026-02-27 |
+| **Reported by** | Dale / Remy |
+| **Severity** | High |
+| **Status** | Fixed |
+| **Component** | `scheduler/proactive.py`, `ai/tool_registry.py`, `memory/automations.py`, `memory/database.py` |
+| **Related** | — |
+
+**Description**
+Reminders created via `schedule_reminder` after bot startup were saved to the database but never fired. The scheduler only registered reminders it knew about at startup. Additionally, there was no mechanism for one-time reminders ("remind me in 1 minute").
+
+**Fix**
+Two-part fix:
+1. The existing `_exec_schedule_reminder` already called `sched.add_automation()` for live registration of recurring jobs — confirmed working.
+2. Added full one-time reminder support:
+   - Added `fire_at TEXT` column to the `automations` table via an idempotent migration in `database.py`.
+   - Updated `AutomationStore.add()` to accept an optional `fire_at` datetime string; added `AutomationStore.delete()` for post-fire cleanup.
+   - Updated `ProactiveScheduler._register_automation_job()` to use APScheduler's `DateTrigger` when `fire_at` is set; one-time jobs delete themselves from the DB after firing.
+   - Added `set_one_time_reminder` Claude tool so Remy can handle "remind me in X minutes / at HH:MM" requests natively.
 
 ---
-
-## Closed Bugs
 
 ### BUG-001 — Inter-tool text fragments leak into Telegram stream
 
@@ -64,3 +83,9 @@ Claude's internal status fragments (e.g. "using list_directory", "let me check t
 
 **Fix**
 Introduced `in_tool_turn` boolean flag in `_stream_with_tools_path()`. Set to `True` on `ToolStatusChunk`, cleared on `ToolTurnComplete`. `TextChunk` events arriving while `in_tool_turn` is `True` are suppressed (DEBUG-logged only, not fed to `current_display`). `current_display` is reset to `[]` on each `ToolTurnComplete` to prevent pre-tool preamble from being repeated after tool results.
+
+---
+
+## Open Bugs
+
+*(none)*

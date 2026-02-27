@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.date import DateTrigger
 
 from ..config import settings
 from ..memory.facts import FactStore
@@ -173,13 +174,23 @@ class ProactiveScheduler:
             return
 
         for row in rows:
-            self._register_automation_job(row["id"], row["user_id"], row["label"], row["cron"])
+            self._register_automation_job(
+                row["id"], row["user_id"], row["label"], row["cron"],
+                fire_at=row.get("fire_at"),
+            )
         if rows:
             logger.info("Loaded %d user automation(s) into scheduler", len(rows))
 
-    def add_automation(self, automation_id: int, user_id: int, label: str, cron: str) -> None:
-        """Register a single automation job (called after /schedule-daily or /schedule-weekly)."""
-        self._register_automation_job(automation_id, user_id, label, cron)
+    def add_automation(
+        self, automation_id: int, user_id: int, label: str, cron: str,
+        fire_at: str | None = None,
+    ) -> None:
+        """Register a single automation job.
+
+        For recurring reminders pass a 5-field *cron* string.
+        For one-time reminders pass a *fire_at* ISO 8601 datetime string.
+        """
+        self._register_automation_job(automation_id, user_id, label, cron, fire_at=fire_at)
 
     def remove_automation(self, automation_id: int) -> None:
         """Remove an automation job from the scheduler."""
@@ -191,17 +202,36 @@ class ProactiveScheduler:
             pass  # Job may not exist in scheduler (e.g. if scheduler was restarted)
 
     def _register_automation_job(
-        self, automation_id: int, user_id: int, label: str, cron: str
+        self, automation_id: int, user_id: int, label: str, cron: str,
+        fire_at: str | None = None,
     ) -> None:
         job_id = f"automation_{automation_id}"
-        try:
-            trigger = _parse_cron(cron)
-        except ValueError as e:
-            logger.warning("Skipping automation %d — invalid cron %r: %s", automation_id, cron, e)
-            return
+
+        if fire_at:
+            try:
+                run_date = datetime.fromisoformat(fire_at)
+            except ValueError as e:
+                logger.warning(
+                    "Skipping one-time automation %d — invalid fire_at %r: %s",
+                    automation_id, fire_at, e,
+                )
+                return
+            trigger = DateTrigger(run_date=run_date, timezone=settings.scheduler_timezone)
+            one_time = True
+            logger.debug("Registered one-time automation job %s (fire_at: %s)", job_id, fire_at)
+        else:
+            try:
+                trigger = _parse_cron(cron)
+            except ValueError as e:
+                logger.warning(
+                    "Skipping automation %d — invalid cron %r: %s", automation_id, cron, e,
+                )
+                return
+            one_time = False
+            logger.debug("Registered recurring automation job %s (cron: %s)", job_id, cron)
 
         async def _job():
-            await self._run_automation(automation_id, user_id, label)
+            await self._run_automation(automation_id, user_id, label, one_time=one_time)
 
         self._scheduler.add_job(
             _job,
@@ -210,9 +240,10 @@ class ProactiveScheduler:
             replace_existing=True,
             misfire_grace_time=300,
         )
-        logger.debug("Registered automation job %s (cron: %s)", job_id, cron)
 
-    async def _run_automation(self, automation_id: int, user_id: int, label: str) -> None:
+    async def _run_automation(
+        self, automation_id: int, user_id: int, label: str, one_time: bool = False
+    ) -> None:
         """Fire a user-defined automation: send a reminder Telegram message."""
         chat_id = _read_primary_chat_id()
         if chat_id is None:
@@ -222,10 +253,21 @@ class ProactiveScheduler:
         await self._send(chat_id, f"⏰ *Reminder:* {label}")
 
         if self._automation_store is not None:
-            try:
-                await self._automation_store.update_last_run(automation_id)
-            except Exception as e:
-                logger.warning("Could not update last_run for automation %d: %s", automation_id, e)
+            if one_time:
+                try:
+                    await self._automation_store.delete(automation_id)
+                    logger.debug("Deleted one-time automation %d after firing", automation_id)
+                except Exception as e:
+                    logger.warning(
+                        "Could not delete one-time automation %d: %s", automation_id, e,
+                    )
+            else:
+                try:
+                    await self._automation_store.update_last_run(automation_id)
+                except Exception as e:
+                    logger.warning(
+                        "Could not update last_run for automation %d: %s", automation_id, e,
+                    )
 
     async def _send(self, chat_id: int, text: str) -> None:
         """Send a message, swallowing errors so a bad send never kills the scheduler."""

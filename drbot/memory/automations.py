@@ -19,21 +19,34 @@ class AutomationStore:
     def __init__(self, db: DatabaseManager) -> None:
         self._db = db
 
-    async def add(self, user_id: int, label: str, cron: str) -> int:
-        """Insert a new automation. Returns the new row ID."""
+    async def add(
+        self, user_id: int, label: str, cron: str = "", fire_at: str | None = None
+    ) -> int:
+        """Insert a new automation. Returns the new row ID.
+
+        Pass *fire_at* (ISO 8601 datetime string) for one-time reminders; leave
+        *cron* empty in that case.  Pass a 5-field *cron* string for recurring
+        reminders and leave *fire_at* as None.
+        """
         async with self._db.get_connection() as conn:
             cursor = await conn.execute(
-                "INSERT INTO automations (user_id, label, cron) VALUES (?, ?, ?)",
-                (user_id, label, cron),
+                "INSERT INTO automations (user_id, label, cron, fire_at) VALUES (?, ?, ?, ?)",
+                (user_id, label, cron, fire_at),
             )
             await conn.commit()
             return cursor.lastrowid
+
+    async def delete(self, automation_id: int) -> None:
+        """Delete an automation row unconditionally (used after one-time reminders fire)."""
+        async with self._db.get_connection() as conn:
+            await conn.execute("DELETE FROM automations WHERE id = ?", (automation_id,))
+            await conn.commit()
 
     async def get_all(self, user_id: int) -> list[dict[str, Any]]:
         """Return all automations for a user, ordered by creation time."""
         async with self._db.get_connection() as conn:
             cursor = await conn.execute(
-                "SELECT id, label, cron, last_run_at, created_at "
+                "SELECT id, label, cron, fire_at, last_run_at, created_at "
                 "FROM automations WHERE user_id = ? ORDER BY id",
                 (user_id,),
             )
@@ -54,7 +67,7 @@ class AutomationStore:
         """Return all automations across all users (for scheduler startup load)."""
         async with self._db.get_connection() as conn:
             cursor = await conn.execute(
-                "SELECT id, user_id, label, cron FROM automations ORDER BY id",
+                "SELECT id, user_id, label, cron, fire_at FROM automations ORDER BY id",
             )
             rows = await cursor.fetchall()
             return [dict(r) for r in rows]
