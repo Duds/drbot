@@ -371,6 +371,15 @@ def main() -> None:
 
         asyncio.create_task(health_monitor(claude_client, app.bot))
 
+        # Pre-warm embedding model to avoid cold-start timeout in diagnostics.
+        # Model load can take 15-30s; doing it here ensures /diagnostics won't time out.
+        try:
+            logger.info("Pre-warming embedding model...")
+            await embeddings.embed("warmup")
+            logger.info("Embedding model ready")
+        except Exception as e:
+            logger.warning("Embedding model pre-warm failed: %s", e)
+
         # Signal readiness — /ready now returns 200
         set_ready()
 

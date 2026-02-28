@@ -131,16 +131,23 @@ class DiagnosticsRunner:
             ("Cache Performance", self._check_cache_performance),
         ]
         
+        # Embedding model load can take 15-30s on cold start; use longer timeout
+        check_timeouts = {
+            "Memory/Embeddings": 45.0,
+        }
+        default_timeout = 10.0
+        
         for name, check_fn in checks:
             check_start = time.perf_counter()
+            timeout = check_timeouts.get(name, default_timeout)
             try:
-                result = await asyncio.wait_for(check_fn(), timeout=10.0)
+                result = await asyncio.wait_for(check_fn(), timeout=timeout)
             except asyncio.TimeoutError:
                 result = CheckResult(
                     name=name,
                     status=CheckStatus.FAIL,
-                    message="Timed out (>10s)",
-                    duration_ms=10000.0,
+                    message=f"Timed out (>{timeout:.0f}s)",
+                    duration_ms=timeout * 1000,
                 )
             except Exception as e:
                 duration_ms = (time.perf_counter() - check_start) * 1000
