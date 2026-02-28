@@ -42,6 +42,44 @@ Anything else relevant: workarounds, frequency, environment quirks.
 
 ## Closed Bugs
 
+### BUG-004 — HuggingFace Hub unauthenticated requests risk rate limiting
+
+| Field           | Value                                                   |
+| --------------- | ------------------------------------------------------- |
+| **Date**        | 2026-02-28                                              |
+| **Reported by** | Remy (log analysis)                                     |
+| **Severity**    | Low                                                     |
+| **Status**      | Fixed                                                   |
+| **Component**   | `.env.example`                                          |
+| **Related**     | —                                                       |
+
+**Description**
+Logs showed `huggingface_hub` warning about unauthenticated requests, exposing Remy to anonymous rate limiting on embedding calls.
+
+**Fix**
+Added `HF_TOKEN=` to `.env.example` with instructions to generate a free read token at `https://huggingface.co/settings/tokens`. `huggingface_hub` reads this env var automatically — no code change required.
+
+---
+
+### BUG-003 — APScheduler misses jobs on startup; daily reminders show "last run: never"
+
+| Field           | Value                                              |
+| --------------- | -------------------------------------------------- |
+| **Date**        | 2026-02-28                                         |
+| **Reported by** | Remy (log analysis)                                |
+| **Severity**    | High                                               |
+| **Status**      | Fixed                                              |
+| **Component**   | `scheduler/proactive.py`                           |
+| **Related**     | BUG-002                                            |
+
+**Description**
+Daily jobs (morning briefing, afternoon focus, evening check-in) and user automation jobs were being silently dropped when the bot restarted after their scheduled fire time. `misfire_grace_time` was 300 s (5 min), too short for a bot that may restart hours after a missed job.
+
+**Fix**
+Increased `misfire_grace_time` from `300` to `3600` (1 hour) for all four built-in scheduler jobs and all user automation jobs in `_register_automation_job()`. APScheduler will now fire missed daily jobs within a 1-hour window of restart. The `update_last_run()` call in `_run_automation()` was already in place; it now has a chance to fire since jobs are no longer dropped.
+
+---
+
 ### BUG-002 — Reminders created mid-session are not fired by the scheduler
 
 | Field           | Value                                                                                          |

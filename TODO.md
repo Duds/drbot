@@ -419,7 +419,8 @@ These were in my-agent and caused bloat. **Do not implement.**
 | **C**    | Google Wallet transaction alerts                                   | US-google-wallet-monitoring         | ⬜ P3 (needs SMS first)      |
 | **C**    | Funny/nonsensical "working" messages for Telegram                  | US-working-messages                 | ⬜ P3                        |
 | **C**    | Telegram Markdown header/formatting fixes                          | US-telegram-markdown-fix            | ⬜ P2                        |
-| **S**    | Multi-Model Orchestration (Mistral, Moonshot)                      | US-model-orchestration              | ⬜ P1                        |
+| **S**    | Telegram catch-all error handler                                   | US-telegram-error-handler           | ✅ Done                      |
+| **S**    | Multi-Model Orchestration (Mistral, Moonshot)                      | US-model-orchestration              | ✅ Done                      |
 | **S**    | Claude Agent SDK subagents                                         | US-claude-agent-sdk-subagents       | ⬜ Deferred (major refactor) |
 | **S**    | Gmail send                                                         | —                                   | ⬜ Deferred (security)       |
 | **W**    | Headless browser automation                                        | —                                   | ❌ Avoid                     |
@@ -430,6 +431,8 @@ These were in my-agent and caused bloat. **Do not implement.**
 ## 📍 Next Steps — Prioritised Backlog
 
 ### P1 — Immediate (small–medium, clear value)
+
+1. ~~**Multi-Model Orchestration** — complete (mistral_client.py, moonshot_client.py, router.py, classifier.py all shipped)~~
 
 1. **Fix tool dispatch exception recovery** (`US-tool-dispatch-exception-recovery`) ← **start here**
    - Bug: if any tool call raises (network error, validation), the exception propagates up and
@@ -478,9 +481,14 @@ These were in my-agent and caused bloat. **Do not implement.**
    - Files: `bot/handlers.py` only — ~20 lines
    - Very low effort for real user value
 
-9. **Telegram Markdown header/formatting fixes** (`US-telegram-markdown-fix`)
-   - Issue: Headings (`#`) not rendering properly in TG; special chars causing parse errors.
-   - Files: `bot/handlers.py`, `utils/telegram_formatting.py`
+9. **Telegram catch-all error handler** (`US-telegram-error-handler`)
+   - Gap: unhandled exceptions produce noisy "No error handlers are registered" log spam; no Telegram notification for unexpected errors
+   - Files: `bot/telegram_bot.py` — ~30 lines, zero dependencies, isolated change
+   - Suppress transient errors (NetworkError, TimedOut); alert Dale for unexpected exceptions
+
+10. **Telegram Markdown header/formatting fixes** (`US-telegram-markdown-fix`)
+    - Issue: Headings (`#`) not rendering properly in TG; special chars causing parse errors.
+    - Files: `bot/handlers.py`, `utils/telegram_formatting.py`
 
 ### P3 — Future (new infrastructure or deferred)
 
@@ -639,3 +647,26 @@ These are tracked here inline; fix alongside related work rather than as standal
   at exactly 4000 chars. The `" …"` suffix can push the display string to 4003 chars, still
   within Telegram's 4096 limit but worth monitoring.
 - **Fix:** Low priority — add a `len(display) <= 4096` assertion in debug mode.
+
+### Backlog: Add Telegram catch-all error handler
+
+**User Story:** As Dale, I want unhandled Telegram exceptions to be caught and logged cleanly, so that errors don't produce noisy log spam and I can diagnose issues more easily.
+
+**Context:** Logs show 8+ instances of `telegram.ext.Application: No error handlers are registered, logging exception.` — unhandled exceptions are falling through with no structured handling.
+
+**Acceptance Criteria:**
+- Register a catch-all error handler on the `Application` instance (e.g. `application.add_error_handler(error_handler)`)
+- Handler logs the exception at ERROR level with context (user ID, update type)
+- Handler optionally notifies Dale via Telegram for unexpected/critical errors
+- No more "No error handlers are registered" log noise
+
+**Component:** `bot/handlers.py` or `main.py`
+**Priority:** Low
+**Related:** BUG-003
+
+## 🐛 Bug: primp impersonation header warning
+
+- **Symptom:** `[WARNING] primp.impersonate: Impersonate 'chrome_114' does not exist, using 'random'` — logged repeatedly during web requests
+- **Cause:** `chrome_114` is not a valid impersonation target in the current version of `primp`
+- **Fix:** Update the impersonation string to a valid value (e.g. `chrome_120` or whichever is current) or remove the explicit impersonation and rely on the `random` fallback intentionally
+- **Priority:** Low (non-breaking, but noisy)

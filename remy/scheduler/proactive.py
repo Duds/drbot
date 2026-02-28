@@ -128,21 +128,21 @@ class ProactiveScheduler:
             trigger=briefing_trigger,
             id="morning_briefing",
             replace_existing=True,
-            misfire_grace_time=300,
+            misfire_grace_time=3600,
         )
         self._scheduler.add_job(
             self._afternoon_focus,
             trigger=afternoon_trigger,
             id="afternoon_focus",
             replace_existing=True,
-            misfire_grace_time=300,
+            misfire_grace_time=3600,
         )
         self._scheduler.add_job(
             self._evening_checkin,
             trigger=checkin_trigger,
             id="evening_checkin",
             replace_existing=True,
-            misfire_grace_time=300,
+            misfire_grace_time=3600,
         )
         # Monthly retrospective — fires on the last day of each month at 18:00
         self._scheduler.add_job(
@@ -248,7 +248,7 @@ class ProactiveScheduler:
             trigger=trigger,
             id=job_id,
             replace_existing=True,
-            misfire_grace_time=300,
+            misfire_grace_time=3600,
         )
 
     async def _run_automation(

@@ -6,9 +6,11 @@ Registers all handlers and starts polling or webhook depending on environment.
 import logging
 import os
 
+import telegram.error
 from telegram.ext import (
     Application,
     CommandHandler,
+    ContextTypes,
     MessageHandler,
     filters,
 )
@@ -16,6 +18,38 @@ from telegram.ext import (
 from ..config import settings
 
 logger = logging.getLogger(__name__)
+
+
+async def _error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Catch-all error handler registered with PTB Application.
+
+    Transient errors (network, timeout, forbidden) are logged at WARNING.
+    Unexpected errors are logged at ERROR with update context and trigger
+    a Telegram alert to the first allowed user.
+    """
+    err = context.error
+    if isinstance(err, (telegram.error.NetworkError, telegram.error.TimedOut,
+                        telegram.error.Forbidden)):
+        logger.warning("Telegram transient error: %s", err)
+        return
+
+    user_id = None
+    update_type = type(update).__name__ if update else "unknown"
+    if hasattr(update, "effective_user") and update.effective_user:
+        user_id = update.effective_user.id
+    logger.error(
+        "Unhandled Telegram exception (update_type=%s, user=%s): %s",
+        update_type, user_id, err, exc_info=context.error,
+    )
+    if settings.telegram_allowed_users:
+        try:
+            await context.bot.send_message(
+                chat_id=settings.telegram_allowed_users[0],
+                text=f"\u26a0\ufe0f *Remy error:* `{type(err).__name__}: {err}`",
+                parse_mode="Markdown",
+            )
+        except Exception:
+            pass
 
 
 class TelegramBot:
@@ -84,6 +118,7 @@ class TelegramBot:
         app.add_handler(
             MessageHandler(filters.PHOTO, handlers["photo"])
         )
+        app.add_error_handler(_error_handler)
 
     def run(self) -> None:
         """Start the bot (blocking). Use run_polling locally, webhook in Azure."""
