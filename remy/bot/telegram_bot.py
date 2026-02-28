@@ -1,6 +1,9 @@
 """
 Telegram bot application builder and runner.
 Registers all handlers and starts polling or webhook depending on environment.
+
+Connection resilience: Configures generous timeouts to handle transient
+Telegram API disconnections gracefully (Bug 6 mitigation).
 """
 
 import logging
@@ -19,6 +22,13 @@ from ..config import settings
 
 logger = logging.getLogger(__name__)
 
+# Connection timeout configuration for Telegram API resilience.
+# These values help mitigate transient disconnections (Bug 6).
+_CONNECT_TIMEOUT = 30.0  # seconds to establish connection
+_READ_TIMEOUT = 30.0  # seconds to wait for response data
+_WRITE_TIMEOUT = 30.0  # seconds to wait for request to be sent
+_POOL_TIMEOUT = 30.0  # seconds to wait for connection from pool
+
 
 async def _error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Catch-all error handler registered with PTB Application.
@@ -28,6 +38,19 @@ async def _error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> 
     a Telegram alert to the first allowed user.
     """
     err = context.error
+
+    # Record error in Prometheus metrics if available
+    try:
+        from ..analytics.metrics import record_error
+        if isinstance(err, telegram.error.NetworkError):
+            record_error("telegram_network")
+        elif isinstance(err, telegram.error.TimedOut):
+            record_error("telegram_timeout")
+        else:
+            record_error("telegram_other")
+    except ImportError:
+        pass
+
     if isinstance(err, (telegram.error.NetworkError, telegram.error.TimedOut,
                         telegram.error.Forbidden)):
         logger.warning("Telegram transient error: %s", err)
@@ -54,7 +77,20 @@ async def _error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> 
 
 class TelegramBot:
     def __init__(self, handlers: dict) -> None:
-        self.application = Application.builder().token(settings.telegram_bot_token).build()
+        # Build application with resilient timeout configuration
+        self.application = (
+            Application.builder()
+            .token(settings.telegram_bot_token)
+            .connect_timeout(_CONNECT_TIMEOUT)
+            .read_timeout(_READ_TIMEOUT)
+            .write_timeout(_WRITE_TIMEOUT)
+            .pool_timeout(_POOL_TIMEOUT)
+            .get_updates_connect_timeout(_CONNECT_TIMEOUT)
+            .get_updates_read_timeout(_READ_TIMEOUT)
+            .get_updates_write_timeout(_WRITE_TIMEOUT)
+            .get_updates_pool_timeout(_POOL_TIMEOUT)
+            .build()
+        )
         self._register_handlers(handlers)
 
     def _register_handlers(self, handlers: dict) -> None:

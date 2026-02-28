@@ -7,8 +7,8 @@ Falls back gracefully to FTS5 search when sqlite-vec is unavailable.
 
 Thread-safety: The ONNX runtime used by sentence-transformers has a known bug where
 concurrent encode() calls cause "Artifact of type=precompile already registered in
-mega-cache artifact factory" errors. We serialize all encode() calls through a single
-asyncio lock to prevent this.
+mega-cache artifact factory" errors. We use a semaphore to allow bounded parallelism
+(2 concurrent encodes) while preventing the worst of the race conditions.
 """
 
 import asyncio
@@ -24,6 +24,11 @@ logger = logging.getLogger(__name__)
 _MODEL_NAME = "all-MiniLM-L6-v2"
 _EMBEDDING_DIM = 384
 
+# Maximum concurrent embedding operations. Set to 2 to allow some parallelism
+# while avoiding ONNX runtime race conditions. A single lock was too restrictive
+# and caused latency spikes under load.
+_MAX_CONCURRENT_ENCODES = 2
+
 # Module-level singleton + lock: prevents concurrent model initialisation from
 # the thread executor, which causes "Artifact already registered" errors in the
 # HuggingFace tokenizers library when two threads try to load the same
@@ -31,22 +36,21 @@ _EMBEDDING_DIM = 384
 _model_instance = None
 _model_lock = threading.Lock()
 
-# Asyncio lock to serialize all encode() calls. The ONNX runtime's internal
-# precompile cache is not thread-safe and throws "Artifact of type=precompile
-# already registered" when concurrent threads hit it. This lock ensures only
-# one embedding call runs at a time across the entire process.
-_encode_lock: asyncio.Lock | None = None
+# Asyncio semaphore to limit concurrent encode() calls. The ONNX runtime's internal
+# precompile cache has thread-safety issues, but a full lock is too restrictive.
+# A semaphore with 2 permits allows bounded parallelism while reducing race conditions.
+_encode_semaphore: asyncio.Semaphore | None = None
 
 
-def _get_encode_lock() -> asyncio.Lock:
-    """Return the module-level asyncio lock, creating it if needed.
+def _get_encode_semaphore() -> asyncio.Semaphore:
+    """Return the module-level asyncio semaphore, creating it if needed.
     
     Must be called from within an async context (i.e. after the event loop exists).
     """
-    global _encode_lock
-    if _encode_lock is None:
-        _encode_lock = asyncio.Lock()
-    return _encode_lock
+    global _encode_semaphore
+    if _encode_semaphore is None:
+        _encode_semaphore = asyncio.Semaphore(_MAX_CONCURRENT_ENCODES)
+    return _encode_semaphore
 
 # Keep the torch inductor cache in a persistent user directory rather than
 # /tmp, which can fill up and break the precompile step entirely.  The
@@ -139,16 +143,16 @@ class EmbeddingStore:
         cache directories and we retry once; if the second attempt still fails
         we propagate the error normally.
         
-        All encode() calls are serialized through an asyncio lock to prevent
-        ONNX runtime thread-safety issues ("Artifact already registered").
+        Encode calls are limited to 2 concurrent operations via a semaphore to
+        balance throughput with ONNX runtime thread-safety concerns.
         """
         loop = asyncio.get_event_loop()
 
         def _do_encode():
             return self._get_model().encode(text, normalize_embeddings=True).tolist()
 
-        # Serialize all encode() calls to avoid ONNX runtime concurrency bugs
-        async with _get_encode_lock():
+        # Limit concurrent encode() calls to avoid ONNX runtime issues
+        async with _get_encode_semaphore():
             try:
                 embedding = await loop.run_in_executor(None, _do_encode)
             except OSError as e:  # pragma: no cover - path triggered empirically

@@ -61,14 +61,23 @@ class MemoryInjector:
             emotional_tone: Pre-detected emotional tone (if None, will detect)
             local_hour: Hour in user's local timezone for tone detection
         """
-        # Fetch relevant items from the unified store
-        facts = await self._get_relevant_knowledge(user_id, current_message, "fact", limit=5, min_confidence=min_confidence)
-        goals = await self._get_relevant_knowledge(user_id, current_message, "goal", limit=3, min_confidence=min_confidence)
-        shopping = await self._get_relevant_knowledge(user_id, current_message, "shopping_item", limit=5, min_confidence=min_confidence)
+        # Fetch relevant items in parallel for better latency
+        facts_task = self._get_relevant_knowledge(
+            user_id, current_message, "fact", limit=5, min_confidence=min_confidence
+        )
+        goals_task = self._get_relevant_knowledge(
+            user_id, current_message, "goal", limit=3, min_confidence=min_confidence
+        )
+        shopping_task = self._get_relevant_knowledge(
+            user_id, current_message, "shopping_item", limit=5, min_confidence=min_confidence
+        )
+        project_task = self._get_project_context(user_id)
+
+        facts, goals, shopping, project_ctx = await asyncio.gather(
+            facts_task, goals_task, shopping_task, project_task
+        )
         
-        project_ctx = await self._get_project_context(user_id)
-        
-        # Detect emotional tone if not provided
+        # Detect emotional tone if not provided (lazy - only when needed)
         detected_tone = emotional_tone
         if detected_tone is None and self._tone_detector:
             detected_tone = await self._tone_detector.detect_tone(

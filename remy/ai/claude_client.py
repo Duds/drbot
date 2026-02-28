@@ -4,6 +4,9 @@ SOUL.md is injected as the system prompt on every call.
 Includes exponential backoff on rate-limit and overload errors.
 
 Also provides stream_with_tools() for native agentic tool use (function calling).
+
+Prompt caching: Static content (system prompts, tool schemas) is cached using
+Anthropic's ephemeral cache_control blocks for 90% cost reduction on cache hits.
 """
 
 from __future__ import annotations
@@ -27,6 +30,10 @@ _RETRY_BASE_DELAY = 2.0  # seconds
 _RATE_LIMIT_RETRY_DELAYS = [30.0, 60.0]  # seconds between attempts 1→2 and 2→3
 # Maximum tool-call iterations before breaking the agentic loop
 _MAX_TOOL_ITERATIONS = 5
+
+# Minimum system prompt length to enable caching (Anthropic requires 1024+ tokens)
+_MIN_CACHE_TOKENS = 1024
+_CHARS_PER_TOKEN_ESTIMATE = 4
 
 
 # --------------------------------------------------------------------------- #
@@ -73,6 +80,32 @@ class ClaudeClient:
     def __init__(self) -> None:
         self._client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
 
+    def _should_cache(self, text: str) -> bool:
+        """Check if text is long enough for Anthropic's caching (1024+ tokens)."""
+        estimated_tokens = len(text) / _CHARS_PER_TOKEN_ESTIMATE
+        return estimated_tokens >= _MIN_CACHE_TOKENS
+
+    def _wrap_system_with_cache(self, system_prompt: str) -> list[dict] | str:
+        """Wrap system prompt with cache_control if long enough for caching."""
+        if self._should_cache(system_prompt):
+            return [
+                {
+                    "type": "text",
+                    "text": system_prompt,
+                    "cache_control": {"type": "ephemeral"}
+                }
+            ]
+        return system_prompt
+
+    def _wrap_tools_with_cache(self, tools: list[dict] | None) -> list[dict] | None:
+        """Add cache_control to the last tool schema for efficient caching."""
+        if not tools:
+            return None
+        # Cache control on last tool caches all preceding tools too
+        tools_copy = [dict(t) for t in tools]
+        tools_copy[-1]["cache_control"] = {"type": "ephemeral"}
+        return tools_copy
+
     async def stream_message(
         self,
         messages: list[dict],
@@ -83,16 +116,19 @@ class ClaudeClient:
         """
         Stream a response from Claude, yielding text deltas as they arrive.
         `system` overrides SOUL.md if provided; otherwise SOUL.md is used.
+        
+        Uses prompt caching for system prompts >= 1024 tokens to reduce costs.
         """
         model = model or settings.model_complex
         system_prompt = system if system is not None else settings.soul_md
+        system_with_cache = self._wrap_system_with_cache(system_prompt)
 
         for attempt in range(_MAX_RETRIES):
             try:
                 async with self._client.messages.stream(
                     model=model,
                     max_tokens=settings.anthropic_max_tokens,
-                    system=system_prompt,
+                    system=system_with_cache,
                     messages=messages,
                 ) as stream:
                     async for text in stream.text_stream:
@@ -151,10 +187,16 @@ class ClaudeClient:
         IMPORTANT: We iterate raw stream events (not text_stream) to avoid
         exhausting the underlying generator before calling get_final_message().
         Instead we use stream.current_message_snapshot after the loop.
+        
+        Uses prompt caching for system prompts and tool schemas to reduce costs.
         """
         model = model or settings.model_complex
         system_prompt = system if system is not None else settings.soul_md
         tools = tool_registry.schemas
+
+        # Enable prompt caching for static content (system prompt + tool schemas)
+        system_with_cache = self._wrap_system_with_cache(system_prompt)
+        tools_with_cache = self._wrap_tools_with_cache(tools)
 
         # Working copy of messages — we'll append assistant + tool_result turns
         working_messages = list(messages)
@@ -184,9 +226,9 @@ class ClaudeClient:
                     async with self._client.messages.stream(
                         model=model,
                         max_tokens=settings.anthropic_max_tokens,
-                        system=system_prompt,
+                        system=system_with_cache,
                         messages=working_messages,
-                        tools=tools,
+                        tools=tools_with_cache,
                     ) as stream:
                         # Iterate raw events so we don't exhaust the generator before
                         # calling stream.get_final_message() below
@@ -349,16 +391,19 @@ class ClaudeClient:
         """
         Non-streaming completion — for classifiers, fact extraction, etc.
         Returns the full response text.
+        
+        Uses prompt caching for system prompts >= 1024 tokens to reduce costs.
         """
         model = model or settings.model_simple
         system_prompt = system if system is not None else settings.soul_md
+        system_with_cache = self._wrap_system_with_cache(system_prompt)
 
         for attempt in range(_MAX_RETRIES):
             try:
                 response = await self._client.messages.create(
                     model=model,
                     max_tokens=max_tokens,
-                    system=system_prompt,
+                    system=system_with_cache,
                     messages=messages,
                 )
 
@@ -367,6 +412,11 @@ class ClaudeClient:
                     return ""
                 if not response.content:
                     return ""
+                if usage_out is not None:
+                    usage_out.input_tokens = response.usage.input_tokens
+                    usage_out.output_tokens = response.usage.output_tokens
+                    usage_out.cache_creation_tokens = getattr(response.usage, "cache_creation_input_tokens", 0) or 0
+                    usage_out.cache_read_tokens = getattr(response.usage, "cache_read_input_tokens", 0) or 0
                 return response.content[0].text
             except (anthropic.RateLimitError, anthropic.APIStatusError) as e:
                 if isinstance(e, anthropic.APIStatusError) and e.status_code < 500:

@@ -45,3 +45,36 @@ _Last updated: see file history_
 - **Priority:** Medium
 - **Status:** ✅ Fixed
 - **Fix:** Updated `stream_with_tools()` call to use correct parameters: `tool_registry`, `user_id`, and `system` instead of the non-existent `tools`, `tool_executor`, and `max_tokens`.
+
+---
+
+## Bug 5: Markdown rendering broken in summary/recap messages
+
+- **Symptom:** Markdown formatting (bold, italic, etc.) appears as raw symbols rather than rendered text in Telegram — e.g. `*text*` instead of **text**
+- **Impact:** Recap and summary-style responses are visually noisy and hard to read
+- **Likely cause:** MarkdownV2 special characters not being escaped correctly, or messages being sent with the wrong `parse_mode` (or none at all) in certain code paths
+- **Priority:** Medium
+- **Status:** ⬜ Open
+- **Reported:** 2026-03-01
+
+---
+
+## Bug 6: Telegram transient disconnections causing slow responses
+
+- **Symptom:** `httpx.RemoteProtocolError: Server disconnected without sending a response` logged as warnings during active conversations
+- **Impact:** Responses are delayed while the bot retries the Telegram connection. From the user's perspective, Remy appears slow or unresponsive.
+- **Likely cause:** Telegram's long-polling connection dropping unexpectedly; retry logic may be adding latency before re-establishing.
+- **Priority:** Medium
+- **Status:** ⬜ Open
+- **Reported:** 2026-02-28
+
+---
+
+## Bug 7: Scheduled job missed on startup — fires with large delay
+
+- **Symptom:** `Run time of job "ProactiveScheduler._register_automation_job" was missed by 6:56:53` logged on startup
+- **Impact:** Scheduled automations (e.g. 1pm reminders) are silently skipped if the bot was down when they were due to fire. No catch-up or notification to the user.
+- **Likely cause:** APScheduler's `misfire_grace_time` is either too short or not configured — missed jobs are dropped rather than caught up or flagged.
+- **Priority:** Medium
+- **Status:** ⬜ Open
+- **Reported:** 2026-02-28

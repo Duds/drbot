@@ -2,6 +2,8 @@
 Model router with fallback chain: Claude → Ollama.
 Routes simple messages to Haiku, complex messages to Sonnet.
 Falls back to Ollama on Claude API errors, notifying the user inline.
+
+Uses circuit breakers to prevent cascading failures when providers are down.
 """
 
 import logging
@@ -13,6 +15,7 @@ from ..bot.session import SessionManager
 from ..config import settings
 from ..exceptions import ServiceUnavailableError
 from ..models import TokenUsage
+from ..utils.circuit_breaker import CircuitOpenError, get_circuit_breaker
 from .classifier import MessageClassifier
 from .claude_client import ClaudeClient
 from .mistral_client import MistralClient
@@ -127,18 +130,33 @@ class ModelRouter:
     async def _stream_with_fallback(
         self, provider: str, messages: list[dict], model: str | None = None, system: str | None = None, user_id: int | None = None, category: str = "unknown"
     ) -> AsyncIterator[str]:
-        """Try a cloud provider; fall back to Ollama on failure."""
+        """
+        Try a cloud provider with circuit breaker protection; fall back to Ollama on failure.
+        
+        Circuit breakers prevent cascading failures by failing fast when a provider
+        is experiencing issues, rather than waiting for timeouts on every request.
+        """
         import time
         import asyncio
         effective_model = model or "default"
         self._last_model = f"{provider}:{effective_model}"
         self._last_usage = TokenUsage()
 
-        logger.info("Streaming via %s: model=%s", provider, effective_model)
+        # Get circuit breaker for this provider (5 failures = 60s open)
+        breaker = get_circuit_breaker(provider, failure_threshold=5, recovery_timeout=60.0)
+
+        logger.info("Streaming via %s: model=%s (circuit: %s)", provider, effective_model, breaker.state.value)
 
         t0 = time.monotonic()
         fallback_used = False
+        circuit_open = False
+        
         try:
+            # Check circuit state before attempting
+            if breaker.is_open:
+                circuit_open = True
+                raise CircuitOpenError(provider, breaker.recovery_timeout)
+            
             if provider == "claude":
                 async for chunk in self._claude.stream_message(messages, model=model, system=system, usage_out=self._last_usage):
                     yield chunk
@@ -148,19 +166,25 @@ class ModelRouter:
             elif provider == "moonshot":
                 async for chunk in self._moonshot.stream_chat(messages, model=model, usage_out=self._last_usage):
                     yield chunk
-        except Exception as e:
-            logger.warning("%s unavailable (%s). Falling back to Ollama.", provider.capitalize(), e)
-            self._last_model = "ollama:local"
-            fallback_used = True
-            if not await self._ollama.is_available():
-                raise ServiceUnavailableError(
-                    f"Both {provider.capitalize()} and Ollama are unavailable. Please try again later."
-                )
-            yield f"\n⚠️ _{provider.capitalize()} unavailable — responding via local Ollama model_\n\n"
             
-            t0 = time.monotonic()  # Reset latency timer for the fallback attempt
-            async for chunk in self._ollama.stream_chat(messages, usage_out=self._last_usage):
+            # Record success with circuit breaker
+            await breaker._record_success()
+            
+        except CircuitOpenError as e:
+            logger.warning("Circuit open for %s (retry in %.0fs). Falling back to Ollama.", provider, e.retry_after)
+            fallback_used = True
+            async for chunk in self._fallback_to_ollama(messages, provider, t0):
                 yield chunk
+                
+        except Exception as e:
+            # Record failure with circuit breaker
+            await breaker._record_failure(e)
+            
+            logger.warning("%s unavailable (%s). Falling back to Ollama.", provider.capitalize(), e)
+            fallback_used = True
+            async for chunk in self._fallback_to_ollama(messages, provider, t0):
+                yield chunk
+                
         finally:
             latency_ms = int((time.monotonic() - t0) * 1000)
             if self._db and user_id is not None:
@@ -180,3 +204,20 @@ class ModelRouter:
                         fallback=fallback_used,
                     )
                 )
+
+    async def _fallback_to_ollama(
+        self, messages: list[dict], original_provider: str, t0: float
+    ) -> AsyncIterator[str]:
+        """Fall back to Ollama when primary provider fails."""
+        import time
+        self._last_model = "ollama:local"
+        
+        if not await self._ollama.is_available():
+            raise ServiceUnavailableError(
+                f"Both {original_provider.capitalize()} and Ollama are unavailable. Please try again later."
+            )
+        
+        yield f"\n⚠️ _{original_provider.capitalize()} unavailable — responding via local Ollama model_\n\n"
+        
+        async for chunk in self._ollama.stream_chat(messages, usage_out=self._last_usage):
+            yield chunk

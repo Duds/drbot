@@ -2,10 +2,12 @@
 JSONL-backed conversation session store.
 Each user's daily session is an append-only .jsonl file.
 Crash-safe: each turn is a single JSON line, never buffered.
+
+Performance: get_recent_turns() uses reverse file reading to efficiently
+retrieve only the last N turns without loading the entire file into memory.
 """
 
 import asyncio
-import json
 import logging
 import os
 from datetime import datetime, timezone
@@ -17,6 +19,9 @@ from ..bot.session import validate_session_key
 from ..models import ConversationTurn
 
 logger = logging.getLogger(__name__)
+
+# Chunk size for reverse file reading (8KB is efficient for most SSDs)
+_REVERSE_READ_CHUNK_SIZE = 8192
 
 
 class ConversationStore:
@@ -54,24 +59,103 @@ class ConversationStore:
     async def get_recent_turns(
         self, user_id: int, session_key: str, limit: int = 20
     ) -> list[ConversationTurn]:
-        """Return the last `limit` turns from the session file."""
+        """
+        Return the last `limit` turns from the session file.
+        
+        Uses reverse file reading for O(limit) performance instead of O(n) where
+        n is the total number of turns. This prevents latency degradation as
+        sessions grow longer.
+        """
         path = self._path(user_id, session_key)
         if path is None or not os.path.exists(path):
             return []
-        turns: list[ConversationTurn] = []
+        
         async with self._file_lock(session_key):
             try:
-                async with aiofiles.open(path, mode="r", encoding="utf-8") as f:
-                    async for line in f:
-                        line = line.strip()
-                        if line:
-                            try:
-                                turns.append(ConversationTurn.model_validate_json(line))
-                            except Exception:
-                                pass  # skip corrupt lines
+                return await self._read_last_n_turns(path, limit)
             except OSError as e:
                 logger.error("Could not read session %s: %s", session_key, e)
-        return turns[-limit:]
+                return []
+
+    async def _read_last_n_turns(self, path: str, limit: int) -> list[ConversationTurn]:
+        """
+        Read the last N turns from a JSONL file using reverse chunked reading.
+        
+        Reads from the end of the file in chunks, collecting complete lines
+        until we have enough turns. Much more efficient than reading the entire
+        file for long sessions.
+        """
+        turns: list[ConversationTurn] = []
+        
+        async with aiofiles.open(path, mode="rb") as f:
+            # Get file size
+            await f.seek(0, 2)  # Seek to end
+            file_size = await f.tell()
+            
+            if file_size == 0:
+                return []
+            
+            # For small files, just read the whole thing (simpler and fast enough)
+            if file_size <= _REVERSE_READ_CHUNK_SIZE * 2:
+                await f.seek(0)
+                content = await f.read()
+                lines = content.decode("utf-8", errors="replace").strip().split("\n")
+                for line in lines[-limit:]:
+                    line = line.strip()
+                    if line:
+                        try:
+                            turns.append(ConversationTurn.model_validate_json(line))
+                        except Exception:
+                            pass  # skip corrupt lines
+                return turns
+            
+            # For larger files, read from the end in chunks
+            buffer = b""
+            position = file_size
+            lines_found: list[str] = []
+            
+            while position > 0 and len(lines_found) < limit + 1:
+                # Calculate how much to read
+                read_size = min(_REVERSE_READ_CHUNK_SIZE, position)
+                position -= read_size
+                
+                # Read the chunk
+                await f.seek(position)
+                chunk = await f.read(read_size)
+                buffer = chunk + buffer
+                
+                # Extract complete lines from the buffer
+                # Keep the first partial line in the buffer
+                while b"\n" in buffer:
+                    # Split from the right to get complete lines
+                    rest, line = buffer.rsplit(b"\n", 1)
+                    if line:  # Non-empty line after the last newline
+                        try:
+                            lines_found.insert(0, line.decode("utf-8", errors="replace"))
+                        except Exception:
+                            pass
+                    buffer = rest
+                    
+                    if len(lines_found) >= limit:
+                        break
+            
+            # Don't forget the remaining buffer (first line of file)
+            if buffer and len(lines_found) < limit:
+                try:
+                    lines_found.insert(0, buffer.decode("utf-8", errors="replace"))
+                except Exception:
+                    pass
+            
+            # Parse the lines into turns (take only the last `limit`)
+            for line in lines_found[-limit:]:
+                line = line.strip()
+                if line:
+                    try:
+                        turns.append(ConversationTurn.model_validate_json(line))
+                    except Exception:
+                        pass  # skip corrupt lines
+        
+        return turns
 
     async def compact(
         self, user_id: int, session_key: str, summary: str

@@ -27,6 +27,7 @@ from telegram.constants import ChatAction
 from telegram.ext import ContextTypes
 
 from ..agents.background import BackgroundTaskRunner
+from ..analytics.timing import RequestTiming, timed_phase, PhaseTimer
 from ..bot.working_message import WorkingMessage
 from ..ai.claude_client import TextChunk, ToolResultChunk, ToolStatusChunk, ToolTurnComplete
 from ..ai.input_validator import (
@@ -47,6 +48,8 @@ from ..memory.facts import FactExtractor, FactStore, extract_and_store_facts
 from ..memory.goals import GoalExtractor, GoalStore, extract_and_store_goals
 from ..memory.injector import MemoryInjector
 from ..models import ConversationTurn
+from ..utils.concurrency import get_extraction_runner
+from ..utils.tokens import estimate_tokens
 
 # Avoid circular imports — these are only used for type hints here
 if TYPE_CHECKING:
@@ -78,6 +81,11 @@ _pending_writes: dict[int, str] = {}
 # Pending archive confirmation: user_id -> list of Gmail message IDs
 _pending_archive: dict[int, list[str]] = {}
 
+# Per-user concurrency control: prevents resource exhaustion from rapid messages
+_MAX_CONCURRENT_PER_USER = 2
+_user_active_requests: dict[int, int] = {}
+_user_request_lock = asyncio.Lock()
+
 
 def _build_message_from_turn(turn: ConversationTurn) -> dict:
     """
@@ -94,11 +102,13 @@ def _build_message_from_turn(turn: ConversationTurn) -> dict:
     return {"role": turn.role, "content": turn.content}
 
 
-# Rough character budget for conversation history passed to Claude.
-# Each tool-result turn from a Gmail search can be very large; keeping this
-# low prevents TPM rate-limit errors (30k input tokens/min limit).
-# Estimate: 4 chars ≈ 1 token → 60k chars ≈ 15k tokens for history.
-_HISTORY_CHAR_BUDGET = 60_000
+# Token budget for conversation history passed to Claude.
+# Uses settings.max_input_tokens_per_request as the hard ceiling.
+# Reserve ~30% of budget for system prompt, memory injection, and tools.
+# The actual budget is calculated dynamically based on settings.
+def _get_history_token_budget() -> int:
+    """Calculate history token budget from settings (70% of max input tokens)."""
+    return int(settings.max_input_tokens_per_request * 0.7)
 
 # Funny "working" messages for Telegram
 _WORKING_MESSAGES = [
@@ -175,17 +185,47 @@ class MessageRotator:
 
 def _trim_messages_to_budget(messages: list[dict]) -> list[dict]:
     """
-    Drop the oldest message pairs from history if the serialised size exceeds
-    _HISTORY_CHAR_BUDGET.  Always preserves at least the last 4 messages so
+    Drop the oldest message pairs from history if the token count exceeds
+    the configured budget. Always preserves at least the last 4 messages so
     that the immediate prior exchange stays intact.
+
+    Uses estimate_tokens() for fast token counting without API calls.
+    Pre-calculates message sizes to avoid O(n²) re-serialisation.
+    
+    Enforces a hard ceiling from settings.max_input_tokens_per_request to
+    prevent runaway costs.
     """
-    while len(messages) > 4:
-        serialised = json.dumps(messages, ensure_ascii=False)
-        if len(serialised) <= _HISTORY_CHAR_BUDGET:
-            break
-        # Drop the first two messages (one user + one assistant pair)
-        messages = messages[2:]
-    return messages
+    if len(messages) <= 4:
+        return messages
+
+    history_budget = _get_history_token_budget()
+    hard_ceiling = settings.max_input_tokens_per_request
+
+    # Pre-calculate token counts for each message
+    msg_tokens = [estimate_tokens(json.dumps(m, ensure_ascii=False)) for m in messages]
+    total_tokens = sum(msg_tokens)
+
+    # Log warning if we're approaching the hard ceiling
+    if total_tokens > hard_ceiling * 0.9:
+        logger.warning(
+            "Message history approaching hard ceiling: %d tokens (ceiling: %d)",
+            total_tokens, hard_ceiling,
+        )
+
+    # Drop oldest pairs until under budget (keep at least 4 messages)
+    start_idx = 0
+    while len(messages) - start_idx > 4 and total_tokens > history_budget:
+        # Drop two messages (user + assistant pair)
+        total_tokens -= msg_tokens[start_idx] + msg_tokens[start_idx + 1]
+        start_idx += 2
+
+    # Final hard ceiling check - if still over, drop more aggressively
+    while len(messages) - start_idx > 2 and total_tokens > hard_ceiling:
+        total_tokens -= msg_tokens[start_idx] + msg_tokens[start_idx + 1]
+        start_idx += 2
+        logger.warning("Hard ceiling exceeded, dropping additional messages")
+
+    return messages[start_idx:]
 
 
 def make_handlers(
@@ -2405,6 +2445,7 @@ Start by introducing the audit and asking for the first identifier to check."""
         session_key: str,
         sent,  # Initial Telegram message to stream into
         chat_id: int | None = None,
+        timing: RequestTiming | None = None,
     ) -> None:
         """
         Tool-aware streaming path using native Anthropic function calling.
@@ -2416,6 +2457,8 @@ Start by introducing the audit and asking for the first identifier to check."""
         The final accumulated text (all text chunks across all iterations) is
         stored as the assistant turn. Tool turns are stored separately with the
         _TOOL_TURN_PREFIX sentinel.
+
+        If timing is provided, populates ttft_ms, tool_execution_ms, and streaming_ms.
         """
         current_display: list[str] = []    # text currently shown in Telegram message
         tool_turns: list[tuple[list[dict], list[dict]]] = []  # (assistant_blocks, result_blocks)
@@ -2458,6 +2501,13 @@ Start by introducing the audit and asking for the first identifier to check."""
             import asyncio
             usage = TokenUsage()
             t0 = time.monotonic()
+
+            # Timing trackers
+            ttft_recorded = False
+            ttft_timer = PhaseTimer()
+            ttft_timer.start()
+            tool_exec_total_ms = 0
+            tool_exec_start: float | None = None
             
             async for event in claude_client.stream_with_tools(
                 messages=messages,
@@ -2482,6 +2532,10 @@ Start by introducing the audit and asking for the first identifier to check."""
                     return
 
                 if isinstance(event, TextChunk):
+                    # Record TTFT on first text chunk
+                    if not ttft_recorded:
+                        ttft_timer.stop()
+                        ttft_recorded = True
                     if in_tool_turn:
                         # Suppress internal monologue emitted while a tool is
                         # executing (between ToolStatusChunk and ToolTurnComplete).
@@ -2499,6 +2553,7 @@ Start by introducing the audit and asking for the first identifier to check."""
 
                 elif isinstance(event, ToolStatusChunk):
                     in_tool_turn = True
+                    tool_exec_start = time.monotonic()
                     # Show a clean tool-status indicator (direct edit, no append)
                     try:
                         await sent.edit_text(
@@ -2513,6 +2568,10 @@ Start by introducing the audit and asking for the first identifier to check."""
 
                 elif isinstance(event, ToolTurnComplete):
                     in_tool_turn = False
+                    # Accumulate tool execution time
+                    if tool_exec_start is not None:
+                        tool_exec_total_ms += int((time.monotonic() - tool_exec_start) * 1000)
+                        tool_exec_start = None
                     # Store the tool turn for conversation history
                     tool_turns.append(
                         (event.assistant_blocks, event.tool_result_blocks)
@@ -2532,7 +2591,11 @@ Start by introducing the audit and asking for the first identifier to check."""
         # Final flush — show complete response
         await _flush_display(final=True)
 
+        # Calculate streaming time (total - ttft - tool execution)
+        streaming_ms = int((time.monotonic() - t0) * 1000) - ttft_timer.elapsed_ms - tool_exec_total_ms
+
         # Persist conversation history
+        persistence_start = time.monotonic()
         # 1. Save tool turns (multi-block) with sentinel prefix
         for assistant_blocks, result_blocks in tool_turns:
             # Assistant turn with tool_use blocks
@@ -2558,6 +2621,15 @@ Start by introducing the audit and asking for the first identifier to check."""
                 user_id, session_key,
                 ConversationTurn(role="assistant", content=final_text, model_used=f"anthropic:{settings.model_complex}"),
             )
+
+        persistence_ms = int((time.monotonic() - persistence_start) * 1000)
+
+        # Populate timing if provided
+        if timing is not None:
+            timing.ttft_ms = ttft_timer.elapsed_ms
+            timing.tool_execution_ms = tool_exec_total_ms
+            timing.streaming_ms = max(0, streaming_ms)
+            timing.persistence_ms = persistence_ms
             
         latency_ms = int((time.monotonic() - t0) * 1000)
         if db is not None:
@@ -2573,6 +2645,7 @@ Start by introducing the audit and asking for the first identifier to check."""
                     usage=usage,
                     latency_ms=latency_ms,
                     fallback=False,
+                    timing=timing,
                 )
             )
 
@@ -2589,6 +2662,32 @@ Start by introducing the audit and asking for the first identifier to check."""
         # Extract thread_id for Telegram Topics support (isolated conversation contexts)
         thread_id: int | None = getattr(update.message, "message_thread_id", None)
 
+        # 0. PER-USER CONCURRENCY CHECK
+        async with _user_request_lock:
+            current_count = _user_active_requests.get(user_id, 0)
+            if current_count >= _MAX_CONCURRENT_PER_USER:
+                await update.message.reply_text(
+                    "⏳ Please wait — I'm still processing your previous message."
+                )
+                return
+            _user_active_requests[user_id] = current_count + 1
+
+        try:
+            await _process_text_input_inner(user_id, text, update, context, thread_id)
+        finally:
+            async with _user_request_lock:
+                _user_active_requests[user_id] = _user_active_requests.get(user_id, 1) - 1
+                if _user_active_requests[user_id] <= 0:
+                    _user_active_requests.pop(user_id, None)
+
+    async def _process_text_input_inner(
+        user_id: int,
+        text: str,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+        thread_id: int | None,
+    ):
+        """Inner implementation of text processing after concurrency check."""
         # 1. RATE LIMITING CHECK
         allowed, rate_limit_reason = _rate_limiter.is_allowed(user_id)
         if not allowed:
@@ -2671,7 +2770,11 @@ Start by introducing the audit and asking for the first identifier to check."""
             # Show typing indicator
             await update.message.chat.send_action(ChatAction.TYPING)
 
+            # Initialise request timing
+            req_timing = RequestTiming()
+
             # Build messages list from recent history (tool-turn-aware)
+            history_start = time.monotonic()
             recent = await conv_store.get_recent_turns(user_id, session_key, limit=20)
             messages = [_build_message_from_turn(t) for t in recent]
             # Strip orphaned tool-turn fragments from the start of history.
@@ -2688,6 +2791,7 @@ Start by introducing the audit and asking for the first identifier to check."""
             # Gmail / calendar ops can push input tokens well over the limit).
             messages = _trim_messages_to_budget(messages)
             messages.append({"role": "user", "content": text})
+            req_timing.history_load_ms = int((time.monotonic() - history_start) * 1000)
 
             # Save the user turn immediately
             user_turn = ConversationTurn(role="user", content=text)
@@ -2703,6 +2807,7 @@ Start by introducing the audit and asking for the first identifier to check."""
                 pass  # Fall back to None if timezone unavailable
 
             # Build system prompt with memory injection and emotional context
+            memory_start = time.monotonic()
             system_prompt = settings.soul_md
             if memory_injector is not None:
                 try:
@@ -2713,6 +2818,7 @@ Start by introducing the audit and asking for the first identifier to check."""
                     system_prompt = sanitize_memory_injection(system_prompt)
                 except Exception as e:
                     logger.error("Memory injection failed, using base prompt: %s", e)
+            req_timing.memory_injection_ms = int((time.monotonic() - memory_start) * 1000)
 
             # Conditional trigger hints (Phase 5 ADHD body-double)
             text_lower = text.lower()
@@ -2755,16 +2861,26 @@ Start by introducing the audit and asking for the first identifier to check."""
                     session_key=session_key,
                     sent=sent,
                     chat_id=update.effective_chat.id if update.effective_chat else None,
+                    timing=req_timing,
+                )
+                # Log timing breakdown at DEBUG level
+                logger.debug(
+                    "Request timing for user %d: history=%dms, memory=%dms, ttft=%dms, "
+                    "tools=%dms, stream=%dms, persist=%dms, total=%dms",
+                    user_id, req_timing.history_load_ms, req_timing.memory_injection_ms,
+                    req_timing.ttft_ms, req_timing.tool_execution_ms, req_timing.streaming_ms,
+                    req_timing.persistence_ms, req_timing.total_ms(),
                 )
                 # Clear task timer on completion (path A)
                 _task_start_times.pop(user_id, None)
-                # Background: extract facts and goals from the user's message
+                # Background: extract facts and goals with bounded concurrency
+                extraction_runner = get_extraction_runner()
                 if fact_extractor is not None and fact_store is not None:
-                    asyncio.create_task(
+                    extraction_runner.run_background(
                         extract_and_store_facts(user_id, text, fact_extractor, fact_store)
                     )
                 if goal_extractor is not None and goal_store is not None:
-                    asyncio.create_task(
+                    extraction_runner.run_background(
                         extract_and_store_goals(user_id, text, goal_extractor, goal_store)
                     )
                 return
@@ -2815,13 +2931,14 @@ Start by introducing the audit and asking for the first identifier to check."""
             # Clear task timer on success
             _task_start_times.pop(user_id, None)
 
-            # Background: extract facts and goals from the user's message
+            # Background: extract facts and goals with bounded concurrency
+            extraction_runner = get_extraction_runner()
             if fact_extractor is not None and fact_store is not None:
-                asyncio.create_task(
+                extraction_runner.run_background(
                     extract_and_store_facts(user_id, text, fact_extractor, fact_store)
                 )
             if goal_extractor is not None and goal_store is not None:
-                asyncio.create_task(
+                extraction_runner.run_background(
                     extract_and_store_goals(user_id, text, goal_extractor, goal_store)
                 )
 

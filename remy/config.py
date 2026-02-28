@@ -87,6 +87,12 @@ class Settings(BaseSettings):
     # Memory system (US-improved-persistent-memory)
     fact_merge_threshold: float = 0.15  # ANN cosine distance below which facts are merged
 
+    # Token budget controls (cost and latency safeguards)
+    max_input_tokens_per_request: int = 50_000  # Hard ceiling for input context
+    max_output_tokens_per_request: int = 4_096  # Hard ceiling for response
+    max_tokens_per_user_per_hour: int = 500_000  # Rate limit per user
+    max_cost_per_user_per_day_usd: float = 10.0  # Daily spend cap per user
+
     # Home directory RAG index (US-home-directory-rag)
     rag_index_enabled: bool = True
     rag_index_paths: str = ""  # Comma-separated paths; empty = ~/Projects,~/Documents

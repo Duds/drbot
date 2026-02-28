@@ -1,15 +1,18 @@
 """
-Lightweight HTTP health check server.
+Lightweight HTTP health check server with Prometheus metrics.
 
 Runs an aiohttp server on HEALTH_PORT (default 8080) alongside the Telegram bot
 in the same asyncio event loop. Used by:
   - Docker HEALTHCHECK
   - Azure Container Instances liveness/readiness probes
   - Local `make status` checks
+  - Prometheus scraping
 
 Endpoints:
-  GET /health  → 200 {"status": "ok", "uptime_s": N}
-  GET /ready   → 200 {"status": "ready"} or 503 {"status": "starting"}
+  GET /         → 200 {"service": "remy", "version": "1.0"}
+  GET /health   → 200 {"status": "ok", "uptime_s": N}
+  GET /ready    → 200 {"status": "ready"} or 503 {"status": "starting"}
+  GET /metrics  → Prometheus metrics in text format
 """
 
 import asyncio
@@ -49,6 +52,23 @@ async def _handle_root(request) -> "aiohttp.web.Response":
     return web.json_response({"service": "remy", "version": "1.0"})
 
 
+async def _handle_metrics(request) -> "aiohttp.web.Response":
+    """Serve Prometheus metrics in text format."""
+    from aiohttp import web  # type: ignore[import]
+    try:
+        from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+        metrics_output = generate_latest()
+        return web.Response(body=metrics_output, content_type=CONTENT_TYPE_LATEST)
+    except ImportError:
+        return web.json_response(
+            {"error": "prometheus-client not installed"},
+            status=501,
+        )
+    except Exception as e:
+        logger.error("Error generating metrics: %s", e)
+        return web.json_response({"error": str(e)}, status=500)
+
+
 async def run_health_server(port: int | None = None) -> None:
     """
     Start the aiohttp health server on the given port.
@@ -65,10 +85,19 @@ async def run_health_server(port: int | None = None) -> None:
 
     _port = port or int(os.environ.get("HEALTH_PORT", "8080"))
 
+    # Initialise service info for Prometheus
+    try:
+        from .analytics.metrics import set_service_info
+        environment = "azure" if os.environ.get("AZURE_ENVIRONMENT") else "local"
+        set_service_info(version="1.0", environment=environment)
+    except ImportError:
+        pass
+
     app = web.Application()
     app.router.add_get("/", _handle_root)
     app.router.add_get("/health", _handle_health)
     app.router.add_get("/ready", _handle_ready)
+    app.router.add_get("/metrics", _handle_metrics)
 
     runner = web.AppRunner(app, access_log=None)  # suppress per-request noise
     await runner.setup()

@@ -1,11 +1,16 @@
 # User Story: [Short Feature Name]
 
+**Status:** ⬜ Backlog
+
 <!--
 Filename convention: US-<kebab-case-feature-slug>.md
 Examples: US-gmail-label-search.md, US-background-task-runner.md
 
-Status tags (add one at the top of the file when relevant):
+Status options:
   ⬜ Backlog  |  🔄 In Progress  |  ✅ Done  |  ❌ Deferred
+
+IMPORTANT: Status MUST be the second line of this file, as a visible bold label.
+Do NOT put status inside an HTML comment — Remy reads these files and comments are invisible.
 -->
 
 ## Summary

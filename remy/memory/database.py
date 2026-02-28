@@ -237,6 +237,11 @@ _MIGRATIONS = [
     "UPDATE knowledge SET last_referenced_at = created_at WHERE last_referenced_at IS NULL;",
     # 007: source_session for tracing facts back to conversations
     "ALTER TABLE knowledge ADD COLUMN source_session TEXT;",
+    # 008-011: Per-phase timing columns for telemetry (US-telemetry-performance)
+    "ALTER TABLE api_calls ADD COLUMN memory_injection_ms INTEGER DEFAULT 0;",
+    "ALTER TABLE api_calls ADD COLUMN ttft_ms INTEGER DEFAULT 0;",
+    "ALTER TABLE api_calls ADD COLUMN tool_execution_ms INTEGER DEFAULT 0;",
+    "ALTER TABLE api_calls ADD COLUMN streaming_ms INTEGER DEFAULT 0;",
 ]
 
 # Triggers to keep FTS indices in sync with source tables
@@ -382,3 +387,59 @@ class DatabaseManager:
                 (user_id, username, first_name, last_name),
             )
             await conn.commit()
+
+    async def cleanup_old_api_calls(self, days: int = 90) -> int:
+        """
+        Delete api_calls records older than the specified number of days.
+        
+        Returns the number of rows deleted. This helps prevent unbounded
+        database growth from telemetry data.
+        """
+        async with self.get_connection() as conn:
+            cursor = await conn.execute(
+                """
+                DELETE FROM api_calls
+                WHERE timestamp < datetime('now', ? || ' days')
+                """,
+                (f"-{days}",),
+            )
+            deleted = cursor.rowcount
+            await conn.commit()
+            if deleted > 0:
+                logger.info("Cleaned up %d api_calls records older than %d days", deleted, days)
+            return deleted
+
+    async def cleanup_old_background_jobs(self, days: int = 30) -> int:
+        """
+        Delete completed background_jobs records older than the specified number of days.
+        
+        Only deletes jobs with status 'completed' or 'failed' to preserve
+        in-progress work. Returns the number of rows deleted.
+        """
+        async with self.get_connection() as conn:
+            cursor = await conn.execute(
+                """
+                DELETE FROM background_jobs
+                WHERE created_at < datetime('now', ? || ' days')
+                  AND status IN ('completed', 'failed')
+                """,
+                (f"-{days}",),
+            )
+            deleted = cursor.rowcount
+            await conn.commit()
+            if deleted > 0:
+                logger.info("Cleaned up %d background_jobs records older than %d days", deleted, days)
+            return deleted
+
+    async def run_retention_cleanup(self) -> dict[str, int]:
+        """
+        Run all retention cleanup tasks.
+        
+        Returns a dict with the number of rows deleted from each table.
+        Should be called periodically (e.g., daily from scheduler or startup).
+        """
+        results = {
+            "api_calls": await self.cleanup_old_api_calls(days=90),
+            "background_jobs": await self.cleanup_old_background_jobs(days=30),
+        }
+        return results
