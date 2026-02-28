@@ -18,8 +18,12 @@ RUN pip install --no-cache-dir --prefix=/install --pre "sqlite-vec>=0.1.7a10"
 # Pre-download the sentence-transformers model at build time
 # This avoids a slow cold-start when the first message arrives
 # HF_HOME points to where the cache will be copied in the runtime stage
+# ORT_DISABLE_ALL_GRAPH_OPTIMIZATION prevents ONNX runtime thread-safety issues
+# OMP_NUM_THREADS=1 forces single-threaded execution to avoid race conditions
 RUN PYTHONPATH=/install/lib/python3.12/site-packages \
     HF_HOME=/root/.cache/huggingface \
+    ORT_DISABLE_ALL_GRAPH_OPTIMIZATION=1 \
+    OMP_NUM_THREADS=1 \
     python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')" \
     && find /root/.cache/huggingface -name "*.lock" -delete
 
@@ -56,12 +60,16 @@ VOLUME /data
 EXPOSE 8080
 
 # Runtime environment defaults
+# ORT_DISABLE_ALL_GRAPH_OPTIMIZATION prevents ONNX runtime "Artifact already registered" errors
+# OMP_NUM_THREADS=1 forces single-threaded ONNX execution to avoid race conditions
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     AZURE_ENVIRONMENT=true \
     DATA_DIR=/data \
     HEALTH_PORT=8080 \
-    HF_HOME=/home/remy/.cache/huggingface
+    HF_HOME=/home/remy/.cache/huggingface \
+    ORT_DISABLE_ALL_GRAPH_OPTIMIZATION=1 \
+    OMP_NUM_THREADS=1
 
 # Docker HEALTHCHECK — Azure uses its own probes but this works for local docker
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \

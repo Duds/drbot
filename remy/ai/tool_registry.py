@@ -1209,6 +1209,371 @@ TOOL_SCHEMAS: list[dict] = [
             "required": [],
         },
     },
+
+    # ------------------------------------------------------------------ #
+    # Session / Privacy tools                                              #
+    # ------------------------------------------------------------------ #
+    {
+        "name": "compact_conversation",
+        "description": (
+            "Summarise and compress the current conversation session to save context. "
+            "Use when the user asks to 'compact', 'summarise the conversation', "
+            "'clear old messages but keep context', or when the conversation is getting long."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
+    {
+        "name": "delete_conversation",
+        "description": (
+            "Delete the conversation history for privacy. Starts a fresh session. "
+            "Use when the user asks to 'delete history', 'clear conversation', "
+            "'start fresh', or 'forget this conversation'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
+    {
+        "name": "set_proactive_chat",
+        "description": (
+            "Set the current chat as the target for proactive morning briefings and evening messages. "
+            "Use when the user asks to 'send briefings here', 'use this chat for updates', "
+            "or 'set this as my main chat'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
+
+    # ------------------------------------------------------------------ #
+    # Project tracking tools                                               #
+    # ------------------------------------------------------------------ #
+    {
+        "name": "set_project",
+        "description": (
+            "Mark a directory as the current project being worked on. Stores in memory. "
+            "Use when the user says 'I'm working on project X', 'set project to ~/Projects/foo', "
+            "or 'track this project'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": (
+                        "Path to the project directory. Use ~/... form "
+                        "(e.g. ~/Projects/my-app). Must be under Projects, Documents, or Downloads."
+                    ),
+                },
+            },
+            "required": ["path"],
+        },
+    },
+    {
+        "name": "get_project_status",
+        "description": (
+            "Show currently tracked projects with file counts and last modified times. "
+            "Use when the user asks 'what projects am I tracking?', 'show my projects', "
+            "or 'project status'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
+
+    # ------------------------------------------------------------------ #
+    # File management tools                                                #
+    # ------------------------------------------------------------------ #
+    {
+        "name": "scan_downloads",
+        "description": (
+            "Analyse the ~/Downloads folder: type breakdown, age distribution, size, "
+            "and oldest files that may need cleanup. "
+            "Use when the user asks 'what's in my Downloads?', 'scan Downloads for clutter', "
+            "or 'check my Downloads folder'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
+    {
+        "name": "organize_directory",
+        "description": (
+            "Analyse a directory and suggest how to organise its files into folders. "
+            "Use when the user asks 'how should I organise this folder?', "
+            "'suggest organisation for ~/Downloads', or 'help me tidy up this directory'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": (
+                        "Path to the directory to analyse. Use ~/... form. "
+                        "Must be under Projects, Documents, or Downloads."
+                    ),
+                },
+            },
+            "required": ["path"],
+        },
+    },
+    {
+        "name": "clean_directory",
+        "description": (
+            "Analyse files in a directory and suggest DELETE, ARCHIVE, or KEEP for each. "
+            "Use when the user asks 'what should I delete?', 'help me clean up this folder', "
+            "or 'which files can I remove?'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": (
+                        "Path to the directory to analyse. Use ~/... form. "
+                        "Must be under Projects, Documents, or Downloads."
+                    ),
+                },
+            },
+            "required": ["path"],
+        },
+    },
+    {
+        "name": "find_files",
+        "description": (
+            "Search for files by filename pattern (glob) under allowed directories. "
+            "Use when the user asks 'find files named *.pdf', 'where are my Python files?', "
+            "or 'search for config files'. This searches filenames, not content."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "pattern": {
+                    "type": "string",
+                    "description": "Glob pattern to match filenames (e.g. '*.pdf', 'config*', '*.py').",
+                },
+            },
+            "required": ["pattern"],
+        },
+    },
+
+    # ------------------------------------------------------------------ #
+    # Bookmark tools                                                       #
+    # ------------------------------------------------------------------ #
+    {
+        "name": "save_bookmark",
+        "description": (
+            "Save a URL as a bookmark with an optional note. "
+            "Use when the user says 'save this link', 'bookmark this URL', "
+            "'remember this page for later', or shares a URL to save."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "The URL to save as a bookmark.",
+                },
+                "note": {
+                    "type": "string",
+                    "description": "Optional note describing what the bookmark is for.",
+                },
+            },
+            "required": ["url"],
+        },
+    },
+    {
+        "name": "list_bookmarks",
+        "description": (
+            "List saved bookmarks, optionally filtered by keyword. "
+            "Use when the user asks 'show my bookmarks', 'what links have I saved?', "
+            "or 'find that bookmark about X'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "filter": {
+                    "type": "string",
+                    "description": "Optional keyword to filter bookmarks by.",
+                },
+            },
+            "required": [],
+        },
+    },
+
+    # ------------------------------------------------------------------ #
+    # Extended contacts tools                                              #
+    # ------------------------------------------------------------------ #
+    {
+        "name": "get_contact_details",
+        "description": (
+            "Get full details for a contact including all phone numbers, emails, addresses, "
+            "birthday, notes, and other information. "
+            "Use when the user asks 'what's John's full contact info?', "
+            "'show me everything about Jane', or 'get contact details for X'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Name of the contact to look up.",
+                },
+            },
+            "required": ["name"],
+        },
+    },
+    {
+        "name": "update_contact_note",
+        "description": (
+            "Add or update a note on a contact in Google Contacts. "
+            "Use when the user says 'add a note to John's contact', "
+            "'remember that Jane likes coffee', or 'update notes for X'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Name of the contact to update.",
+                },
+                "note": {
+                    "type": "string",
+                    "description": "The note text to add or update.",
+                },
+            },
+            "required": ["name", "note"],
+        },
+    },
+    {
+        "name": "find_sparse_contacts",
+        "description": (
+            "Find contacts that are missing both email and phone number — candidates for cleanup. "
+            "Use when the user asks 'find incomplete contacts', 'which contacts need updating?', "
+            "or 'prune my contacts'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
+
+    # ------------------------------------------------------------------ #
+    # Google Docs extended                                                 #
+    # ------------------------------------------------------------------ #
+    {
+        "name": "append_to_gdoc",
+        "description": (
+            "Append text to an existing Google Doc. "
+            "Use when the user says 'add this to my doc', 'append to the meeting notes', "
+            "or 'write this at the end of the document'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "doc_id_or_url": {
+                    "type": "string",
+                    "description": "Google Doc ID or full URL.",
+                },
+                "text": {
+                    "type": "string",
+                    "description": "Text to append to the document.",
+                },
+            },
+            "required": ["doc_id_or_url", "text"],
+        },
+    },
+
+    # ------------------------------------------------------------------ #
+    # Gmail extended                                                       #
+    # ------------------------------------------------------------------ #
+    {
+        "name": "classify_promotional_emails",
+        "description": (
+            "Find promotional and newsletter emails in the inbox that could be archived. "
+            "Use when the user asks 'find promotional emails', 'what newsletters do I have?', "
+            "or 'help me clean up my inbox'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of promotional emails to find (default 30).",
+                    "minimum": 1,
+                    "maximum": 100,
+                },
+            },
+            "required": [],
+        },
+    },
+
+    # ------------------------------------------------------------------ #
+    # Analytics extended                                                   #
+    # ------------------------------------------------------------------ #
+    {
+        "name": "get_costs",
+        "description": (
+            "Get estimated AI costs by provider and model for a time period. "
+            "Use when the user asks 'how much have I spent on AI?', 'show my API costs', "
+            "or 'what are my usage costs?'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "period": {
+                    "type": "string",
+                    "enum": ["7d", "30d", "90d", "all"],
+                    "description": "Time period: 7d, 30d (default), 90d, or all.",
+                },
+            },
+            "required": [],
+        },
+    },
+
+    # ------------------------------------------------------------------ #
+    # Special tools                                                        #
+    # ------------------------------------------------------------------ #
+    {
+        "name": "trigger_reindex",
+        "description": (
+            "Manually trigger file reindexing for the home directory RAG system. "
+            "Use when the user asks 'reindex my files', 'update the file index', "
+            "or 'refresh the search index'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
+    {
+        "name": "start_privacy_audit",
+        "description": (
+            "Start a guided privacy audit to check for data broker presence, breach exposure, "
+            "and privacy hygiene. This begins an interactive multi-step process. "
+            "Use when the user asks 'check my privacy', 'do a privacy audit', "
+            "or 'am I exposed online?'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
 ]
 
 
@@ -1404,6 +1769,53 @@ class ToolRegistry:
                 return await self._exec_search_files(tool_input)
             elif tool_name == "index_status":
                 return await self._exec_index_status()
+            # Session / Privacy
+            elif tool_name == "compact_conversation":
+                return await self._exec_compact_conversation(user_id)
+            elif tool_name == "delete_conversation":
+                return await self._exec_delete_conversation(user_id)
+            elif tool_name == "set_proactive_chat":
+                return await self._exec_set_proactive_chat(user_id)
+            # Project tracking
+            elif tool_name == "set_project":
+                return await self._exec_set_project(tool_input, user_id)
+            elif tool_name == "get_project_status":
+                return await self._exec_get_project_status(user_id)
+            # File management
+            elif tool_name == "scan_downloads":
+                return await self._exec_scan_downloads()
+            elif tool_name == "organize_directory":
+                return await self._exec_organize_directory(tool_input)
+            elif tool_name == "clean_directory":
+                return await self._exec_clean_directory(tool_input)
+            elif tool_name == "find_files":
+                return await self._exec_find_files(tool_input)
+            # Bookmarks
+            elif tool_name == "save_bookmark":
+                return await self._exec_save_bookmark(tool_input, user_id)
+            elif tool_name == "list_bookmarks":
+                return await self._exec_list_bookmarks(tool_input, user_id)
+            # Extended contacts
+            elif tool_name == "get_contact_details":
+                return await self._exec_get_contact_details(tool_input)
+            elif tool_name == "update_contact_note":
+                return await self._exec_update_contact_note(tool_input)
+            elif tool_name == "find_sparse_contacts":
+                return await self._exec_find_sparse_contacts()
+            # Google Docs extended
+            elif tool_name == "append_to_gdoc":
+                return await self._exec_append_to_gdoc(tool_input)
+            # Gmail extended
+            elif tool_name == "classify_promotional_emails":
+                return await self._exec_classify_promotional_emails(tool_input)
+            # Analytics extended
+            elif tool_name == "get_costs":
+                return await self._exec_get_costs(tool_input, user_id)
+            # Special tools
+            elif tool_name == "trigger_reindex":
+                return await self._exec_trigger_reindex()
+            elif tool_name == "start_privacy_audit":
+                return await self._exec_start_privacy_audit()
             else:
                 return f"Unknown tool: {tool_name}"
         except Exception as exc:

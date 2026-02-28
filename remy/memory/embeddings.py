@@ -4,6 +4,11 @@ Vector embedding store using sentence-transformers + sqlite-vec.
 Lazy-loads the SentenceTransformer model on first use to avoid slow startup.
 Model encode() runs in a thread executor to avoid blocking the asyncio event loop.
 Falls back gracefully to FTS5 search when sqlite-vec is unavailable.
+
+Thread-safety: The ONNX runtime used by sentence-transformers has a known bug where
+concurrent encode() calls cause "Artifact of type=precompile already registered in
+mega-cache artifact factory" errors. We serialize all encode() calls through a single
+asyncio lock to prevent this.
 """
 
 import asyncio
@@ -26,6 +31,23 @@ _EMBEDDING_DIM = 384
 _model_instance = None
 _model_lock = threading.Lock()
 
+# Asyncio lock to serialize all encode() calls. The ONNX runtime's internal
+# precompile cache is not thread-safe and throws "Artifact of type=precompile
+# already registered" when concurrent threads hit it. This lock ensures only
+# one embedding call runs at a time across the entire process.
+_encode_lock: asyncio.Lock | None = None
+
+
+def _get_encode_lock() -> asyncio.Lock:
+    """Return the module-level asyncio lock, creating it if needed.
+    
+    Must be called from within an async context (i.e. after the event loop exists).
+    """
+    global _encode_lock
+    if _encode_lock is None:
+        _encode_lock = asyncio.Lock()
+    return _encode_lock
+
 # Keep the torch inductor cache in a persistent user directory rather than
 # /tmp, which can fill up and break the precompile step entirely.  The
 # variable must be set before any part of sentence-transformers/torch is
@@ -37,6 +59,15 @@ os.environ.setdefault(
     "TORCHINDUCTOR_CACHE_DIR",
     os.path.expanduser("~/.cache/torch/inductor"),
 )
+
+# Disable ONNX graph optimization to prevent "Artifact already registered"
+# errors. The ONNX runtime's precompile cache is not thread-safe and corrupts
+# when multiple threads access it concurrently. Disabling optimization trades
+# some performance for stability.
+os.environ.setdefault("ORT_DISABLE_ALL_GRAPH_OPTIMIZATION", "1")
+
+# Also set ONNX runtime to use sequential execution to avoid threading issues
+os.environ.setdefault("OMP_NUM_THREADS", "1")
 
 
 # --- housekeeping helpers ---------------------------------------------------
@@ -107,21 +138,26 @@ class EmbeddingStore:
         encode call.  In that case the helper above will wipe any temporary
         cache directories and we retry once; if the second attempt still fails
         we propagate the error normally.
+        
+        All encode() calls are serialized through an asyncio lock to prevent
+        ONNX runtime thread-safety issues ("Artifact already registered").
         """
         loop = asyncio.get_event_loop()
 
         def _do_encode():
             return self._get_model().encode(text, normalize_embeddings=True).tolist()
 
-        try:
-            embedding = await loop.run_in_executor(None, _do_encode)
-        except OSError as e:  # pragma: no cover - path triggered empirically
-            if e.errno == 28:  # no space
-                logger.warning("disk full during embedding; cleaning tmp cache and retrying")
-                _cleanup_tmp_cache()
+        # Serialize all encode() calls to avoid ONNX runtime concurrency bugs
+        async with _get_encode_lock():
+            try:
                 embedding = await loop.run_in_executor(None, _do_encode)
-            else:
-                raise
+            except OSError as e:  # pragma: no cover - path triggered empirically
+                if e.errno == 28:  # no space
+                    logger.warning("disk full during embedding; cleaning tmp cache and retrying")
+                    _cleanup_tmp_cache()
+                    embedding = await loop.run_in_executor(None, _do_encode)
+                else:
+                    raise
         return embedding
 
     def _vec_bytes(self, embedding: list[float]) -> bytes:

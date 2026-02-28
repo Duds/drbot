@@ -40,7 +40,7 @@ from ..ai.router import ModelRouter
 from ..bot.session import SessionManager
 from ..bot.streaming import stream_to_telegram
 from ..config import settings
-from ..diagnostics import get_error_summary, get_recent_logs
+from ..diagnostics import get_error_summary, get_recent_logs, is_diagnostics_trigger
 from ..exceptions import ServiceUnavailableError
 from ..memory.conversations import ConversationStore
 from ..memory.facts import FactExtractor, FactStore, extract_and_store_facts
@@ -212,6 +212,7 @@ def make_handlers(
     conversation_analyzer=None,  # remy.analytics.analyzer.ConversationAnalyzer | None
     job_store=None,  # remy.memory.background_jobs.BackgroundJobStore | None
     plan_store=None,  # remy.memory.plans.PlanStore | None
+    diagnostics_runner=None,  # remy.diagnostics.DiagnosticsRunner | None
 ):
     """
     Factory that returns handler functions bound to shared dependencies.
@@ -293,7 +294,8 @@ def make_handlers(
             "  /stats [period]   — usage stats (7d, 30d, 90d, all)\n"
             "  /goal-status      — goal tracking dashboard\n"
             "  /retrospective    — generate monthly retrospective\n"
-            "  /consolidate      — extract memories from today's chats\n\n"
+            "  /consolidate      — extract memories from today's chats\n"
+            "  /diagnostics      — comprehensive self-diagnostics\n\n"
             "Send a voice message to transcribe and process it.\n"
             "Just send me a message to get started."
         )
@@ -317,6 +319,12 @@ def make_handlers(
         # Use the central status check from ToolRegistry
         status_text = await tool_registry.dispatch("check_status", {}, update.effective_user.id)
         await update.message.reply_text(status_text)
+
+    async def diagnostics_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Run comprehensive self-diagnostics. Alternative to trigger phrase."""
+        if await _reject_unauthorized(update):
+            return
+        await _run_diagnostics(update)
 
     async def compact_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if await _reject_unauthorized(update):
@@ -2334,6 +2342,62 @@ Start by introducing the audit and asking for the first identifier to check."""
         except Exception as exc:
             logger.warning("upsert_user failed: %s", exc)
 
+    async def _run_diagnostics(update: Update) -> None:
+        """
+        Run comprehensive self-diagnostics and send results to user.
+        
+        Triggered by the phrase "Are you there, God. It's me Dale."
+        """
+        from ..diagnostics import DiagnosticsRunner, format_diagnostics_output
+        
+        await update.message.chat.send_action(ChatAction.TYPING)
+        
+        # Get scheduler from late-binding ref if available
+        scheduler = scheduler_ref.get("proactive_scheduler") if scheduler_ref else proactive_scheduler
+        
+        # Create runner with all available components
+        runner = DiagnosticsRunner(
+            db=db,
+            embeddings=None,  # Will be wired in main.py
+            knowledge_store=None,  # Will be wired in main.py
+            conv_store=conv_store,
+            claude_client=claude_client,
+            mistral_client=None,  # Will be wired in main.py
+            moonshot_client=None,  # Will be wired in main.py
+            ollama_client=None,  # Will be wired in main.py
+            tool_registry=tool_registry,
+            scheduler=scheduler,
+            settings=settings,
+        )
+        
+        # Override with injected runner if available
+        if diagnostics_runner is not None:
+            runner = diagnostics_runner
+        
+        try:
+            result = await runner.run_all()
+            output = format_diagnostics_output(result, settings.scheduler_timezone)
+            
+            # Log full results
+            logger.info(
+                "Diagnostics complete: %s (%d checks, %.0fms)",
+                result.overall_status.value,
+                len(result.checks),
+                result.total_duration_ms,
+            )
+            
+            # Send to user (Telegram has 4096 char limit)
+            if len(output) > 4000:
+                output = output[:4000] + "\n\n_(truncated)_"
+            
+            await update.message.reply_text(output, parse_mode="Markdown")
+            
+        except Exception as e:
+            logger.exception("Diagnostics failed")
+            await update.message.reply_text(
+                f"❌ Diagnostics failed: {type(e).__name__}: {e}"
+            )
+
     async def _stream_with_tools_path(
         user_id: int,
         text: str,
@@ -2534,6 +2598,12 @@ Start by introducing the audit and asking for the first identifier to check."""
         valid, validation_reason = validate_message_input(text)
         if not valid:
             await update.message.reply_text(f"❌ {validation_reason}")
+            return
+
+        # 2b. DIAGNOSTICS TRIGGER CHECK
+        # "Are you there, God. It's me Dale." triggers self-diagnostics
+        if is_diagnostics_trigger(text):
+            await _run_diagnostics(update)
             return
 
         # 3. TASK TIMEOUT CHECK
@@ -3106,6 +3176,7 @@ Start by introducing the audit and asking for the first identifier to check."""
         "jobs": jobs_command,
         "reindex": reindex_command,
         "consolidate": consolidate_command,
+        "diagnostics": diagnostics_command,
         "message": handle_message,
         "voice": handle_voice,
         "photo": handle_photo,

@@ -34,6 +34,7 @@ from .memory.injector import MemoryInjector
 from .memory.knowledge import KnowledgeExtractor, KnowledgeStore
 from .memory.file_index import FileIndexer
 from .analytics.analyzer import ConversationAnalyzer
+from .diagnostics import DiagnosticsRunner
 from .scheduler.proactive import ProactiveScheduler
 from .voice.transcriber import VoiceTranscriber
 
@@ -201,6 +202,23 @@ def main() -> None:
         file_indexer=file_indexer,
     )
 
+    # Diagnostics runner — comprehensive health checks
+    # Scheduler is late-bound via _late dict
+    diagnostics_runner = DiagnosticsRunner(
+        db=db,
+        embeddings=embeddings,
+        knowledge_store=knowledge_store,
+        conv_store=conv_store,
+        claude_client=claude_client,
+        mistral_client=mistral_client,
+        moonshot_client=moonshot_client,
+        ollama_client=ollama_client,
+        tool_registry=tool_registry,
+        scheduler=None,  # Late-bound via _late
+        settings=settings,
+    )
+    _late["diagnostics_runner"] = diagnostics_runner
+
     async def _briefing_proxy(update, context):
         """Late-bound /briefing handler — delegates to scheduler once available."""
         sched = _late["proactive_scheduler"]
@@ -235,6 +253,7 @@ def main() -> None:
         conversation_analyzer=conv_analyzer,
         job_store=job_store,
         plan_store=plan_store,
+        diagnostics_runner=diagnostics_runner,
     )
     handlers["briefing"] = _briefing_proxy
 
@@ -286,6 +305,9 @@ def main() -> None:
         _late["proactive_scheduler"] = sched
         _proactive_ref.append(sched)
         sched.start()
+
+        # Update diagnostics runner with the scheduler reference
+        diagnostics_runner._scheduler = sched
 
         # Load user-defined automations from DB into the live scheduler
         await sched.load_user_automations()

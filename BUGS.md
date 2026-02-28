@@ -166,7 +166,62 @@ Introduced `in_tool_turn` boolean flag in `_stream_with_tools_path()`. Set to `T
 
 ## Open Bugs
 
-_No open bugs._
+### BUG-010 — ONNX runtime workaround reduces embedding parallelism
+
+| Field           | Value                                              |
+| --------------- | -------------------------------------------------- |
+| **Date**        | 2026-02-28                                         |
+| **Reported by** | Dale                                               |
+| **Severity**    | Low                                                |
+| **Status**      | Open                                               |
+| **Component**   | `remy/memory/embeddings.py`, `Dockerfile`          |
+| **Related**     | BUG-009                                            |
+
+**Description**
+The fix for BUG-009 (ONNX "Artifact already registered" error) works by:
+1. Serializing all embedding calls through an asyncio lock
+2. Disabling ONNX graph optimization (`ORT_DISABLE_ALL_GRAPH_OPTIMIZATION=1`)
+3. Forcing single-threaded execution (`OMP_NUM_THREADS=1`)
+
+While this fixes the crash, it reduces embedding throughput during file indexing. The initial index of ~/Projects and ~/Documents now takes longer than it would with parallel embeddings.
+
+**Potential Future Fixes**
+- Upgrade sentence-transformers/ONNX runtime when a thread-safe version is released
+- Switch to a different embedding backend (e.g. PyTorch-only mode without ONNX)
+- Use a dedicated embedding worker process with a queue to isolate ONNX state
+- Batch multiple texts into single encode() calls to amortise the lock overhead
+
+**Notes**
+This is a known upstream issue. Monitor:
+- https://github.com/microsoft/onnxruntime/issues (search "precompile artifact")
+- https://github.com/UKPLab/sentence-transformers/issues
+
+Low priority — the current fix is stable and the performance impact is acceptable for background indexing.
+
+---
+
+### BUG-009 — ONNX runtime "Artifact already registered" breaks all embeddings
+
+| Field           | Value                                              |
+| --------------- | -------------------------------------------------- |
+| **Date**        | 2026-02-28                                         |
+| **Reported by** | Dale                                               |
+| **Severity**    | Critical                                           |
+| **Status**      | Fixed                                              |
+| **Component**   | `remy/memory/embeddings.py`                        |
+| **Related**     | —                                                  |
+
+**Description**
+After Docker rebuild, all embedding calls fail with "Artifact of type=precompile already registered in mega-cache artifact factory". This causes:
+- File indexing to fail completely (0 files indexed after 181s)
+- Semantic search to fall back to FTS
+- Degraded search quality across the board
+
+**Root Cause**
+The ONNX runtime used by sentence-transformers is not thread-safe. When multiple async tasks call `embed()` concurrently (via `run_in_executor`), the ONNX precompile cache throws this error. The existing `_model_lock` only protected model initialization, not the actual encode() calls.
+
+**Fix**
+Added an asyncio lock (`_encode_lock`) that serializes all `embed()` calls. While this reduces parallelism, it prevents the ONNX runtime from corrupting its internal state. The lock is created lazily on first use to avoid issues with event loop availability at module import time.
 
 ---
 
