@@ -209,6 +209,7 @@ def make_handlers(
     automation_store=None,  # remy.memory.automations.AutomationStore | None
     scheduler_ref: dict | None = None,  # mutable {"proactive_scheduler": ...} for late-binding
     conversation_analyzer=None,  # remy.analytics.analyzer.ConversationAnalyzer | None
+    job_store=None,  # remy.memory.background_jobs.BackgroundJobStore | None
 ):
     """
     Factory that returns handler functions bound to shared dependencies.
@@ -1625,7 +1626,11 @@ def make_handlers(
                 chunks.append(chunk)
             return "".join(chunks)
 
-        runner = BackgroundTaskRunner(context.bot, update.message.chat_id)
+        job_id = await job_store.create(user_id, "board", topic) if job_store else None
+        runner = BackgroundTaskRunner(
+            context.bot, update.message.chat_id,
+            job_store=job_store, job_id=job_id,
+        )
         asyncio.create_task(runner.run(_collect_board(), label="board analysis"))
 
     # ------------------------------------------------------------------ #
@@ -1954,8 +1959,42 @@ def make_handlers(
                 user_id, "month", claude_client
             )
 
-        runner = BackgroundTaskRunner(context.bot, update.message.chat_id)
+        job_id = await job_store.create(user_id, "retrospective", "") if job_store else None
+        runner = BackgroundTaskRunner(
+            context.bot, update.message.chat_id,
+            job_store=job_store, job_id=job_id,
+        )
         asyncio.create_task(runner.run(_run_retrospective(), label="retrospective"))
+
+    async def jobs_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """/jobs — list recent background jobs with status and result snippets."""
+        if await _reject_unauthorized(update):
+            return
+        if job_store is None:
+            await update.message.reply_text("Job tracking not available.")
+            return
+
+        user_id = update.effective_user.id
+        jobs = await job_store.list_recent(user_id, limit=10)
+
+        if not jobs:
+            await update.message.reply_text("No background jobs yet.")
+            return
+
+        _STATUS_EMOJI = {"queued": "⏳", "running": "🔄", "done": "✅", "failed": "❌"}
+        lines = ["📋 *Recent background jobs:*\n"]
+        for job in jobs:
+            emoji = _STATUS_EMOJI.get(job["status"], "❓")
+            started = job["created_at"][:16].replace("T", " ")
+            snippet = ""
+            if job["result_text"]:
+                preview = job["result_text"][:80].replace("\n", " ")
+                snippet = f'\n  _{preview}…_'
+            lines.append(
+                f'`#{job["id"]}` {job["job_type"]:14} {emoji} `{job["status"]}`  {started}{snippet}'
+            )
+
+        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
     # ------------------------------------------------------------------ #
     # Message handler                                                       #
@@ -2565,6 +2604,7 @@ def make_handlers(
         "stats": stats_command,
         "goal-status": goal_status_command,
         "retrospective": retrospective_command,
+        "jobs": jobs_command,
         "message": handle_message,
         "voice": handle_voice,
         "photo": handle_photo,

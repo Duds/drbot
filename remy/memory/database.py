@@ -113,6 +113,18 @@ CREATE TABLE IF NOT EXISTS automations (
 );
 CREATE INDEX IF NOT EXISTS idx_automations_user ON automations(user_id);
 
+CREATE TABLE IF NOT EXISTS background_jobs (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id      INTEGER NOT NULL,
+    job_type     TEXT NOT NULL,
+    status       TEXT NOT NULL DEFAULT 'queued',
+    input_text   TEXT,
+    result_text  TEXT,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    completed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_background_jobs_user ON background_jobs(user_id, created_at);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts USING fts5(
     content,
     category,

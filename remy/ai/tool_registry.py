@@ -958,6 +958,28 @@ TOOL_SCHEMAS: list[dict] = [
             "required": [],
         },
     },
+    # Phase 7 Step 2: persistent job tracking
+    {
+        "name": "list_background_jobs",
+        "description": (
+            "List recent background tasks (board analyses, retrospectives, research) "
+            "and their status or results. "
+            "Use when the user asks: 'is my board done yet?', 'what did the retrospective say?', "
+            "'show me recent background jobs', or 'did my analysis finish?'. "
+            "Results are stored in full so you can re-read them even after the Telegram message is gone."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "status_filter": {
+                    "type": "string",
+                    "enum": ["all", "done", "running", "failed"],
+                    "description": "Filter by job status. Omit or use 'all' to see everything.",
+                },
+            },
+            "required": [],
+        },
+    },
 ]
 
 
@@ -1002,6 +1024,8 @@ class ToolRegistry:
         grocery_list_file: str = "",
         # Phase 6
         conversation_analyzer=None,
+        # Phase 7 Step 2
+        job_store=None,
     ) -> None:
         self._logs_dir = logs_dir
         self._knowledge_store = knowledge_store
@@ -1023,6 +1047,7 @@ class ToolRegistry:
         self._scheduler_ref = scheduler_ref or {}
         self._grocery_list_file = grocery_list_file
         self._conversation_analyzer = conversation_analyzer
+        self._job_store = job_store
 
     @property
     def schemas(self) -> list[dict]:
@@ -1116,6 +1141,9 @@ class ToolRegistry:
                 return await self._exec_get_goal_status(user_id)
             elif tool_name == "generate_retrospective":
                 return await self._exec_generate_retrospective(tool_input, user_id)
+            # Phase 7 Step 2: background job tracking
+            elif tool_name == "list_background_jobs":
+                return await self._exec_list_background_jobs(tool_input, user_id)
             else:
                 return f"Unknown tool: {tool_name}"
         except Exception as exc:
@@ -2191,3 +2219,30 @@ class ToolRegistry:
             )
         except Exception as e:
             return f"Could not generate retrospective: {e}"
+
+    async def _exec_list_background_jobs(self, inp: dict, user_id: int) -> str:
+        if self._job_store is None:
+            return "Job tracking not available."
+        status_filter = inp.get("status_filter", "all")
+        try:
+            jobs = await self._job_store.list_recent(user_id, limit=10)
+        except Exception as e:
+            return f"Could not fetch background jobs: {e}"
+        if status_filter != "all":
+            jobs = [j for j in jobs if j["status"] == status_filter]
+        if not jobs:
+            suffix = f" with status '{status_filter}'" if status_filter != "all" else ""
+            return f"No background jobs{suffix} found."
+        _STATUS_EMOJI = {"queued": "⏳", "running": "🔄", "done": "✅", "failed": "❌"}
+        lines = []
+        for job in jobs:
+            emoji = _STATUS_EMOJI.get(job["status"], "❓")
+            result_preview = ""
+            if job["result_text"]:
+                preview = job["result_text"][:300].replace("\n", " ")
+                result_preview = f"\n  Result: {preview}"
+            lines.append(
+                f'#{job["id"]} {job["job_type"]} {emoji} {job["status"]}'
+                f'  (started {job["created_at"][:16]}){result_preview}'
+            )
+        return "\n\n".join(lines)

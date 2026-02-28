@@ -22,6 +22,7 @@ from .config import settings
 from .health import run_health_server, set_ready
 from .logging_config import setup_logging
 from .memory.automations import AutomationStore
+from .memory.background_jobs import BackgroundJobStore
 from .memory.conversations import ConversationStore
 from .memory.database import DatabaseManager
 from .memory.embeddings import EmbeddingStore
@@ -107,6 +108,7 @@ def main() -> None:
     knowledge_extractor = KnowledgeExtractor(claude_client)
     memory_injector = MemoryInjector(db, embeddings, knowledge_store, fts)
     automation_store = AutomationStore(db)
+    job_store = BackgroundJobStore(db)
     conv_analyzer = ConversationAnalyzer(conv_store, db)
 
     # Initialise voice transcriber (lazy — Whisper model loads on first voice message)
@@ -174,6 +176,8 @@ def main() -> None:
         grocery_list_file=settings.grocery_list_file,
         # Phase 6: analytics
         conversation_analyzer=conv_analyzer,
+        # Phase 7 Step 2: persistent job tracking
+        job_store=job_store,
     )
 
     async def _briefing_proxy(update, context):
@@ -208,6 +212,7 @@ def main() -> None:
         automation_store=automation_store,
         scheduler_ref=_late,  # mutable container; scheduler set after post_init
         conversation_analyzer=conv_analyzer,
+        job_store=job_store,
     )
     handlers["briefing"] = _briefing_proxy
 
@@ -240,6 +245,7 @@ def main() -> None:
 
         # Initialise database schema
         await db.init()
+        await job_store.mark_interrupted()  # crash recovery: flip stale 'running' → 'failed'
         logger.info("Database initialised")
 
         # Wire proactive scheduler (requires live bot reference from PTB)
