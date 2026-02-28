@@ -1,6 +1,9 @@
 services:
   remy:
-    build: .
+    build:
+      context: .
+      secrets:
+        - HF_TOKEN
     env_file: .env
     environment:
       AZURE_ENVIRONMENT: "false"
@@ -48,3 +51,7 @@ services:
     volumes:
       - ${HOME}/.ollama:/root/.ollama
     restart: unless-stopped
+
+secrets:
+  HF_TOKEN:
+    file: .hf_token

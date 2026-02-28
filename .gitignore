@@ -27,3 +27,4 @@ build/
 .claude/
 .vscode/settings.local.json
 remy-system-prompt.md
+.hf_token

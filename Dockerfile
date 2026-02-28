@@ -1,6 +1,9 @@
 # ── Stage 1: Builder ──────────────────────────────────────────────────────────
 FROM python:3.12-slim AS builder
 
+# Build-time HuggingFace token for authenticated downloads (higher rate limits)
+ARG HF_TOKEN
+
 WORKDIR /build
 
 # Install build tools needed by some Python packages
@@ -18,9 +21,11 @@ RUN pip install --no-cache-dir --prefix=/install --pre "sqlite-vec>=0.1.7a10"
 # Pre-download the sentence-transformers model at build time
 # This avoids a slow cold-start when the first message arrives
 # HF_HOME points to where the cache will be copied in the runtime stage
+# HF_TOKEN enables authenticated downloads with higher rate limits
 # ORT_DISABLE_ALL_GRAPH_OPTIMIZATION prevents ONNX runtime thread-safety issues
 # OMP_NUM_THREADS=1 forces single-threaded execution to avoid race conditions
-RUN PYTHONPATH=/install/lib/python3.12/site-packages \
+RUN --mount=type=secret,id=HF_TOKEN,env=HF_TOKEN \
+    PYTHONPATH=/install/lib/python3.12/site-packages \
     HF_HOME=/root/.cache/huggingface \
     ORT_DISABLE_ALL_GRAPH_OPTIMIZATION=1 \
     OMP_NUM_THREADS=1 \
