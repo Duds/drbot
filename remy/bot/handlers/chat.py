@@ -55,6 +55,7 @@ from ...memory.facts import extract_and_store_facts
 from ...memory.goals import extract_and_store_goals
 from ...models import ConversationTurn
 from ...utils.concurrency import get_extraction_runner
+from ...utils.telegram_formatting import format_telegram_message
 
 if TYPE_CHECKING:
     from ...ai.router import ModelRouter
@@ -188,7 +189,7 @@ def make_chat_handlers(
             if len(full) > last_edit_len + 50 or final:
                 truncated = candidate[:4000]
                 try:
-                    await sent.edit_text(truncated, parse_mode="Markdown")
+                    await sent.edit_text(format_telegram_message(truncated), parse_mode="MarkdownV2")
                     last_edit_len = len(full)
                 except Exception:
                     try:
@@ -316,6 +317,18 @@ def make_chat_handlers(
         )
 
         await _flush_display(final=True)
+        # Retry once if there's text to display — the first attempt may have failed
+        # due to a transient Telegram disconnect, leaving the " …" suffix showing.
+        if "".join(current_display).strip():
+            await asyncio.sleep(0.3)
+            await _flush_display(final=True)
+        elif tool_turns:
+            # Claude ended with a tool call and produced no text. The message still
+            # shows "⚙️ Using tool_name…" — clear it with a minimal indicator.
+            try:
+                await sent.edit_text("✓")
+            except Exception:
+                pass
 
         streaming_ms = int((time.monotonic() - t0) * 1000) - ttft_timer.elapsed_ms - tool_exec_total_ms
 

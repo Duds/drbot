@@ -27,6 +27,7 @@ from apscheduler.triggers.date import DateTrigger
 from ..config import settings
 from ..memory.facts import FactStore
 from ..memory.goals import GoalStore
+from ..utils.telegram_formatting import format_telegram_message
 from .briefings import (
     MorningBriefingGenerator,
     AfternoonFocusGenerator,
@@ -148,6 +149,7 @@ class ProactiveScheduler:
             id="morning_briefing",
             replace_existing=True,
             misfire_grace_time=3600,
+            coalesce=True,
         )
         self._scheduler.add_job(
             self._afternoon_focus,
@@ -155,6 +157,7 @@ class ProactiveScheduler:
             id="afternoon_focus",
             replace_existing=True,
             misfire_grace_time=3600,
+            coalesce=True,
         )
         self._scheduler.add_job(
             self._evening_checkin,
@@ -162,6 +165,7 @@ class ProactiveScheduler:
             id="evening_checkin",
             replace_existing=True,
             misfire_grace_time=3600,
+            coalesce=True,
         )
         # Monthly retrospective — fires on the last day of each month at 18:00
         self._scheduler.add_job(
@@ -173,6 +177,7 @@ class ProactiveScheduler:
             id="monthly_retrospective",
             replace_existing=True,
             misfire_grace_time=3600,  # 1-hour grace for a monthly job
+            coalesce=True,
         )
 
         # Nightly file reindexing (if file indexer is configured)
@@ -186,6 +191,7 @@ class ProactiveScheduler:
                     id="reindex_files",
                     replace_existing=True,
                     misfire_grace_time=3600,
+                    coalesce=True,
                 )
                 logger.info("File reindex job scheduled: %s", reindex_cron)
             except ValueError as e:
@@ -201,6 +207,7 @@ class ProactiveScheduler:
                 id="end_of_day_consolidation",
                 replace_existing=True,
                 misfire_grace_time=3600,
+                coalesce=True,
             )
             logger.info("Memory consolidation job scheduled: %s", consolidation_cron)
         except ValueError as e:
@@ -300,6 +307,7 @@ class ProactiveScheduler:
             id=job_id,
             replace_existing=True,
             misfire_grace_time=3600,
+            coalesce=True,
         )
 
     async def _run_automation(
@@ -399,10 +407,15 @@ class ProactiveScheduler:
     async def _send(self, chat_id: int, text: str) -> None:
         """Send a message, swallowing errors so a bad send never kills the scheduler."""
         try:
-            await self._bot.send_message(chat_id=chat_id, text=text, parse_mode="Markdown")
+            formatted = format_telegram_message(text)
+            await self._bot.send_message(chat_id=chat_id, text=formatted, parse_mode="MarkdownV2")
             logger.info("Proactive send succeeded (chat %d, %d chars)", chat_id, len(text))
-        except Exception as e:
-            logger.warning("Proactive send failed (chat %d): %s", chat_id, e)
+        except Exception:
+            try:
+                await self._bot.send_message(chat_id=chat_id, text=text)
+                logger.info("Proactive send succeeded (plain text fallback, chat %d)", chat_id)
+            except Exception as e:
+                logger.warning("Proactive send failed (chat %d): %s", chat_id, e)
 
     async def _morning_briefing(self) -> None:
         """07:00 job — send a summary of active goals, calendar, birthdays, downloads."""

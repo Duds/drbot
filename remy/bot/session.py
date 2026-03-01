@@ -6,6 +6,7 @@ Provides asyncio locks (to serialize message processing) and cancel events.
 import asyncio
 import logging
 import re
+import zoneinfo
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
@@ -56,8 +57,18 @@ class SessionManager:
 
         Thread IDs come from Telegram's message_thread_id when Topics are enabled.
         Each topic maintains its own isolated conversation history.
+
+        Uses the configured local timezone (settings.scheduler_timezone) so that
+        the session date matches the user's local clock. Without this, a UTC date
+        rollover at midnight UTC would create a new empty session mid-afternoon for
+        users in AEDT (UTC+11), discarding the morning's conversation context.
         """
-        date = datetime.now(timezone.utc).strftime("%Y%m%d")
+        from ..config import settings
+        try:
+            tz = zoneinfo.ZoneInfo(settings.scheduler_timezone)
+        except Exception:
+            tz = timezone.utc
+        date = datetime.now(tz).strftime("%Y%m%d")
         if thread_id is not None:
             return f"user_{user_id}_thread_{thread_id}_{date}"
         return f"user_{user_id}_{date}"

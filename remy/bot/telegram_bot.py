@@ -75,6 +75,7 @@ class TelegramBot:
         self.application = (
             Application.builder()
             .token(settings.telegram_bot_token)
+            .http_version("1.1")
             .connect_timeout(timeout)
             .read_timeout(timeout)
             .write_timeout(timeout)

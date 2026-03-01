@@ -96,6 +96,7 @@ class TestTelegramBot:
             mock_builder = MagicMock()
             mock_app.builder.return_value = mock_builder
             mock_builder.token.return_value = mock_builder
+            mock_builder.http_version.return_value = mock_builder
             mock_builder.connect_timeout.return_value = mock_builder
             mock_builder.read_timeout.return_value = mock_builder
             mock_builder.write_timeout.return_value = mock_builder
@@ -105,14 +106,15 @@ class TestTelegramBot:
             mock_builder.get_updates_write_timeout.return_value = mock_builder
             mock_builder.get_updates_pool_timeout.return_value = mock_builder
             mock_builder.build.return_value = MagicMock()
-            
+
             from remy.bot.telegram_bot import TelegramBot
-            
+
             bot = TelegramBot(handlers=sample_handlers)
-            
+
             # Verify token was set
             mock_builder.token.assert_called_once_with("test_token")
-            
+            # Verify HTTP/1.1 was requested (avoids httpx.RemoteProtocolError on long-polling)
+            mock_builder.http_version.assert_called_once_with("1.1")
             # Verify timeouts were configured
             assert mock_builder.connect_timeout.called
             assert mock_builder.read_timeout.called
@@ -124,6 +126,7 @@ class TestTelegramBot:
             mock_application = MagicMock()
             mock_app.builder.return_value = mock_builder
             mock_builder.token.return_value = mock_builder
+            mock_builder.http_version.return_value = mock_builder
             mock_builder.connect_timeout.return_value = mock_builder
             mock_builder.read_timeout.return_value = mock_builder
             mock_builder.write_timeout.return_value = mock_builder
@@ -198,6 +201,7 @@ class TestBotRun:
             mock_application = MagicMock()
             mock_app.builder.return_value = mock_builder
             mock_builder.token.return_value = mock_builder
+            mock_builder.http_version.return_value = mock_builder
             mock_builder.connect_timeout.return_value = mock_builder
             mock_builder.read_timeout.return_value = mock_builder
             mock_builder.write_timeout.return_value = mock_builder

@@ -370,6 +370,14 @@ class DatabaseManager:
                     )
 
         await self._conn.commit()
+        # Force a WAL checkpoint on startup to flush any stale WAL pages left by a
+        # previous crash. Safe here because no other readers exist yet.
+        try:
+            await self._conn.execute("PRAGMA wal_checkpoint(RESTART);")
+            await self._conn.commit()
+            logger.debug("WAL checkpoint completed on startup")
+        except Exception as e:
+            logger.warning("WAL checkpoint failed (non-fatal): %s", e)
         logger.info("Database initialised: %s", self.db_path)
 
     async def close(self) -> None:
