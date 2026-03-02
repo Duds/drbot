@@ -52,6 +52,32 @@ services:
       - ${HOME}/.ollama:/root/.ollama
     restart: unless-stopped
 
+  # ── Cloudflare Tunnel (optional) ──────────────────────────────────────────
+  # Exposes the health server (port 8080) via a secure public HTTPS URL
+  # without port forwarding or a static IP.
+  #
+  # Setup (one-time, on the Mac Mini):
+  #   1. Go to dash.cloudflare.com → Zero Trust → Networks → Tunnels
+  #   2. Create a tunnel named "remy", choose Docker install
+  #   3. Copy the token from the docker run command shown
+  #   4. Add: CLOUDFLARE_TUNNEL_TOKEN=<token> to .env
+  #   5. In tunnel config, add a Public Hostname:
+  #        Hostname: remy.<your-domain>.com
+  #        Service:  http://remy:8080
+  #   6. Set HEALTH_API_TOKEN in .env to protect /logs and /telemetry
+  #
+  # Start with tunnel: make tunnel-up
+  # Stop:              make tunnel-stop
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+    restart: unless-stopped
+    depends_on:
+      remy:
+        condition: service_healthy
+    profiles:
+      - tunnel
+
 secrets:
   HF_TOKEN:
     file: .hf_token

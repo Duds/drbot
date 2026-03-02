@@ -21,6 +21,8 @@ from .bot.telegram_bot import TelegramBot
 from .config import settings
 from .health import (
     run_health_server,
+    set_data_dir,
+    set_db,
     set_diagnostics_runner,
     set_hook_manager,
     set_outbound_queue,
@@ -244,6 +246,9 @@ def main() -> None:
     # Wire diagnostics runner and queue to health server for /diagnostics endpoint
     set_diagnostics_runner(diagnostics_runner)
     set_outbound_queue(outbound_queue)
+    # Wire db and data_dir for /logs and /telemetry endpoints
+    set_db(db)
+    set_data_dir(settings.data_dir)
     # Hook manager is wired after import to avoid circular dependency
     from .hooks import hook_manager
     set_hook_manager(hook_manager)
@@ -324,6 +329,7 @@ def main() -> None:
 
         # Initialise outbound queue with bot reference and replay pending messages
         outbound_queue.bot = app.bot
+        _late["bot"] = app.bot  # Used by react_to_message tool
         replayed = await outbound_queue.replay_on_startup()
         if replayed > 0:
             logger.info("Outbound queue: replaying %d pending messages", replayed)

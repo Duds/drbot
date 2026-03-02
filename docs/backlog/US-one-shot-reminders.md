@@ -6,7 +6,7 @@ Status tags (add one at the top of the file when relevant):
   ⬜ Backlog  |  🔄 In Progress  |  ✅ Done  |  ❌ Deferred
 -->
 
-⬜ Backlog
+✅ Done — 2026-03-02
 
 ## Summary
 As a user, I want to set one-shot reminders via natural language (e.g. "remind me in 20 minutes" or "remind me at 3pm to call the dentist") so that I can get a single Telegram notification at a specific future time without creating a recurring reminder.

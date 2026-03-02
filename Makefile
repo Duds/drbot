@@ -1,5 +1,6 @@
 .PHONY: run test test-cov lint build docker-run docker-stop setup db db-init \
-        deploy deploy-update deploy-logs deploy-delete health
+        deploy deploy-update deploy-logs deploy-delete health \
+        tunnel-up tunnel-stop tunnel-logs telemetry logs
 
 # ── Local development ─────────────────────────────────────────────────────────
 run:
@@ -44,6 +45,39 @@ PORT ?= 8080
 health:
 	@curl -sf http://$(HOST):$(PORT)/health | python3 -m json.tool || \
 		echo "Health check failed — is remy running?"
+
+# ── Cloudflare Tunnel ─────────────────────────────────────────────────────────
+# Requires CLOUDFLARE_TUNNEL_TOKEN in .env (see .env.example for setup steps)
+
+# Start remy + relay + ollama + cloudflared tunnel
+tunnel-up:
+	docker compose --profile tunnel up -d
+
+# Stop everything including tunnel
+tunnel-stop:
+	docker compose --profile tunnel down
+
+# Follow cloudflared logs
+tunnel-logs:
+	docker compose logs -f cloudflared
+
+# ── Remote observability ───────────────────────────────────────────────────────
+# Usage: make telemetry HOST=remy.yourdomain.com TOKEN=<HEALTH_API_TOKEN>
+#        make logs HOST=remy.yourdomain.com TOKEN=<HEALTH_API_TOKEN> LINES=200
+
+TOKEN ?=
+LINES ?= 100
+
+telemetry:
+	@curl -sf \
+		$(if $(TOKEN),-H "Authorization: Bearer $(TOKEN)") \
+		https://$(HOST)/telemetry | python3 -m json.tool
+
+logs:
+	@curl -sf \
+		$(if $(TOKEN),-H "Authorization: Bearer $(TOKEN)") \
+		"https://$(HOST)/logs?lines=$(LINES)" || \
+		echo "Logs fetch failed — is the tunnel running?"
 
 # ── Azure deployment ──────────────────────────────────────────────────────────
 # Required env vars (set in shell or .env.azure):

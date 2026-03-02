@@ -6,6 +6,7 @@ import asyncio
 import logging
 import os
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -80,9 +81,12 @@ async def exec_list_reminders(registry: ToolRegistry, user_id: int) -> str:
     for row in rows:
         last = row["last_run_at"] or "never"
         if row.get("fire_at"):
-            lines.append(
-                f"[ID {row['id']}] '{row['label']}' — once at {row['fire_at']}"
-            )
+            try:
+                fire_dt = datetime.fromisoformat(row["fire_at"])
+                display = fire_dt.strftime("%a %d %b %Y at %H:%M")
+            except (ValueError, TypeError):
+                display = row["fire_at"]
+            lines.append(f"[ID {row['id']}] '{row['label']}' — once at {display}")
         else:
             cron_parts = row["cron"].split()
             minute, hour, _, _, dow = cron_parts
@@ -136,14 +140,16 @@ async def exec_set_one_time_reminder(registry: ToolRegistry, inp: dict, user_id:
             "Use ISO 8601, e.g. '2026-02-27T15:30:00'."
         )
 
+    # Treat naive datetimes as local (AEST/AEDT). Using zoneinfo handles
+    # DST correctly — ZoneInfo("Australia/Canberra") is UTC+10 in winter
+    # and UTC+11 in summer, unlike a hardcoded offset.
+    _local_tz = ZoneInfo("Australia/Canberra")
     if fire_dt.tzinfo is None:
-        fire_dt_utc = fire_dt.replace(tzinfo=timezone.utc).replace(
-            hour=(fire_dt.hour - 10) % 24
-        )
+        fire_dt_aware = fire_dt.replace(tzinfo=_local_tz)
     else:
-        fire_dt_utc = fire_dt.astimezone(timezone.utc)
+        fire_dt_aware = fire_dt.astimezone(timezone.utc)
 
-    if fire_dt_utc <= datetime.now(timezone.utc):
+    if fire_dt_aware <= datetime.now(timezone.utc):
         return "That time is already in the past. Please provide a future datetime."
 
     try:

@@ -118,6 +118,42 @@ async def exec_end_session(registry: ToolRegistry, inp: dict, user_id: int) -> s
     return "\n\n".join(result_parts)
 
 
+async def exec_react_to_message(
+    registry: ToolRegistry,
+    tool_input: dict,
+    chat_id: int | None,
+    message_id: int | None,
+) -> str:
+    """Set an emoji reaction on Dale's most recent Telegram message."""
+    ALLOWED_EMOJI = {"👍", "✅", "❤️", "🔥", "🤔", "😂", "👀", "🎉"}
+
+    emoji = tool_input.get("emoji", "").strip()
+    if not emoji:
+        return "No emoji specified."
+    if emoji not in ALLOWED_EMOJI:
+        return f"Emoji {emoji!r} is not in the allowed set: {' '.join(sorted(ALLOWED_EMOJI))}"
+
+    bot = registry._scheduler_ref.get("bot")
+    if bot is None:
+        logger.warning("react_to_message: bot not available in scheduler_ref")
+        return "Reaction not available — bot reference not wired."
+    if chat_id is None or message_id is None:
+        return "Reaction not available — chat or message context missing."
+
+    from telegram import ReactionTypeEmoji
+    try:
+        await bot.set_message_reaction(
+            chat_id=chat_id,
+            message_id=message_id,
+            reaction=[ReactionTypeEmoji(emoji=emoji)],
+        )
+        logger.debug("Reacted with %s on message %d in chat %d", emoji, message_id, chat_id)
+        return f"Reacted with {emoji}"
+    except Exception as exc:
+        logger.warning("set_message_reaction failed: %s", exc)
+        return f"Could not set reaction: {exc}"
+
+
 async def exec_help(registry: ToolRegistry, inp: dict, user_id: int) -> str:
     """Show available tools and their descriptions."""
     from .schemas import TOOL_SCHEMAS

@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 
 from telegram import Update
 from telegram.constants import ChatAction
+from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
 from .base import (
@@ -166,6 +167,7 @@ def make_chat_handlers(
         session_key: str,
         sent,
         chat_id: int | None = None,
+        message_id: int | None = None,
         timing: RequestTiming | None = None,
     ) -> None:
         """Tool-aware streaming path using native Anthropic function calling."""
@@ -191,12 +193,17 @@ def make_chat_handlers(
                 try:
                     await sent.edit_text(format_telegram_message(truncated), parse_mode="MarkdownV2")
                     last_edit_len = len(full)
-                except Exception:
+                except BadRequest as e:
+                    if "message is not modified" in str(e).lower():
+                        return  # already up to date — don't overwrite with plain text
+                    # Real MarkdownV2 parse error — fall back to plain text
                     try:
                         await sent.edit_text(truncated)
                         last_edit_len = len(full)
-                    except Exception as e:
-                        logger.debug("Message edit failed (flood control): %s", e)
+                    except Exception as e2:
+                        logger.debug("Message edit failed (flood control): %s", e2)
+                except Exception as e:
+                    logger.debug("Message edit failed (flood control): %s", e)
 
         try:
             rotator.start()
@@ -227,6 +234,7 @@ def make_chat_handlers(
                 system=system_prompt,
                 usage_out=usage,
                 chat_id=chat_id,
+                message_id=message_id,
             ):
                 if not ttft_recorded:
                     ttft_timer.stop()
@@ -576,6 +584,7 @@ def make_chat_handlers(
                     session_key=session_key,
                     sent=sent,
                     chat_id=update.effective_chat.id if update.effective_chat else None,
+                    message_id=update.message.message_id if update.message else None,
                     timing=req_timing,
                 )
                 logger.debug(
@@ -800,6 +809,7 @@ def make_chat_handlers(
                     session_key=session_key,
                     sent=sent,
                     chat_id=update.effective_chat.id if update.effective_chat else None,
+                    message_id=update.message.message_id if update.message else None,
                 )
             else:
                 try:
@@ -934,6 +944,7 @@ def make_chat_handlers(
                     session_key=session_key,
                     sent=sent,
                     chat_id=update.effective_chat.id if update.effective_chat else None,
+                    message_id=update.message.message_id if update.message else None,
                 )
             else:
                 try:

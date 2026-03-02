@@ -15,6 +15,7 @@ from telegram.ext import (
     CommandHandler,
     ContextTypes,
     MessageHandler,
+    MessageReactionHandler,
     filters,
 )
 
@@ -153,6 +154,7 @@ class TelegramBot:
         app.add_handler(
             MessageHandler(filters.Document.ALL, handlers["document"])
         )
+        app.add_handler(MessageReactionHandler(handlers["reaction"]))
         app.add_error_handler(_error_handler)
 
     def run(self) -> None:
@@ -168,4 +170,8 @@ class TelegramBot:
                 )
                 return
         logger.info("Starting bot with polling")
-        self.application.run_polling(drop_pending_updates=True)
+        from telegram import Update
+        self.application.run_polling(
+            drop_pending_updates=True,
+            allowed_updates=Update.ALL_TYPES,
+        )

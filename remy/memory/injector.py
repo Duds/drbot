@@ -261,6 +261,10 @@ class MemoryInjector:
     async def _get_project_context(self, user_id: int) -> list[dict[str, Any]]:
         """
         Read README.md from tracked project directories and return as project_context facts.
+
+        Only processes facts whose content is a valid absolute path with no component
+        exceeding the OS filename limit (255 bytes). Non-path facts stored with
+        category="project" (e.g. descriptive text) are silently skipped.
         """
         try:
             # Metadata in knowledge table stores category for facts
@@ -272,15 +276,25 @@ class MemoryInjector:
                 project_paths = [row["content"] for row in rows]
         except Exception:
             return []
-            
+
         if not project_paths:
             return []
-            
+
         results = []
         for path_str in project_paths[:3]:
-            readme = Path(path_str) / "README.md"
-            if readme.exists():
-                try:
+            # Skip non-absolute paths — these are descriptive facts, not filesystem paths
+            if not path_str.startswith("/"):
+                logger.debug("Skipping non-path project fact: %.80s", path_str)
+                continue
+            # Skip paths with any component exceeding the OS filename limit (255 bytes).
+            # A long project description stored as a single path component triggers
+            # OSError [Errno 36] File name too long on .exists() / stat().
+            if any(len(part.encode()) > 255 for part in Path(path_str).parts):
+                logger.debug("Skipping project path with oversized component: %.80s", path_str)
+                continue
+            try:
+                readme = Path(path_str) / "README.md"
+                if readme.exists():
                     content = await asyncio.to_thread(
                         lambda p: p.read_text(encoding="utf-8"), readme
                     )
@@ -289,8 +303,8 @@ class MemoryInjector:
                         "category": "project_context",
                         "content": f"[{path_str}] {content}",
                     })
-                except Exception as e:
-                    logger.debug("Failed to read project context file %s: %s", path_str, e)
+            except Exception as e:
+                logger.debug("Failed to read project context file %s: %s", path_str, e)
         return results
 
     async def build_system_prompt(

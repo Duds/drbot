@@ -100,6 +100,7 @@ Tools available:
   Special
     trigger_reindex       → manually trigger file reindexing
     start_privacy_audit   → begin guided privacy audit
+    react_to_message      → set an emoji reaction on Dale's message
 """
 
 from __future__ import annotations
@@ -812,7 +813,8 @@ TOOL_SCHEMAS: list[dict] = [
             "Set a one-time reminder that fires at a specific date and time. "
             "Use this when the user says 'remind me in 10 minutes', 'remind me at 3pm', "
             "'remind me tomorrow morning', etc. "
-            "Compute the absolute local datetime from the current time and pass it as fire_at."
+            "ALWAYS call get_current_time first — you need the current local datetime to "
+            "compute the absolute fire_at. Never guess the current time."
         ),
         "input_schema": {
             "type": "object",
@@ -1594,6 +1596,38 @@ TOOL_SCHEMAS: list[dict] = [
             "type": "object",
             "properties": {},
             "required": [],
+        },
+    },
+    {
+        "name": "react_to_message",
+        "description": (
+            "Set an emoji reaction on Dale's most recent Telegram message. "
+            "Use this INSTEAD OF a text reply for simple acknowledgements — a 👍 is cleaner than 'Got it, Doc.' "
+            "Use it ALONGSIDE a text reply when tone warrants it (e.g. react ❤️ then give a warm response). "
+            "Do NOT react to every message — only when a reaction adds genuine meaning. "
+            "Never react AND send a hollow one-liner that says the same thing as the reaction. "
+            "Allowed emoji: 👍 ✅ ❤️ 🔥 🤔 😂 👀 🎉"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "emoji": {
+                    "type": "string",
+                    "description": (
+                        "The emoji to react with. Must be one of: 👍 ✅ ❤️ 🔥 🤔 😂 👀 🎉. "
+                        "Choose based on the emotional register of the message:\n"
+                        "👍 — acknowledged, will do, understood\n"
+                        "✅ — task complete or confirmed\n"
+                        "❤️ — warm moment, emotional support\n"
+                        "🔥 — great idea, enthusiastic agreement\n"
+                        "🤔 — uncertain, need to think\n"
+                        "😂 — genuinely funny\n"
+                        "👀 — noted, watching this\n"
+                        "🎉 — celebrating an achievement"
+                    ),
+                },
+            },
+            "required": ["emoji"],
         },
     },
 ]

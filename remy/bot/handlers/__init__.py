@@ -52,6 +52,7 @@ from .automations import make_automation_handlers
 from .admin import make_admin_handlers
 from .privacy import make_privacy_handlers
 from .chat import make_chat_handlers
+from .reactions import make_reaction_handler
 
 if TYPE_CHECKING:
     from ..session import SessionManager
@@ -189,6 +190,14 @@ def make_handlers(
         conv_store=conv_store,
         claude_client=claude_client,
         tool_registry=tool_registry,
+    ))
+
+    # Emoji reaction handler
+    handlers.update(make_reaction_handler(
+        claude_client=claude_client,
+        conv_store=conv_store,
+        memory_injector=memory_injector,
+        session_manager=session_manager,
     ))
 
     # Chat handlers (message, voice, photo, document)

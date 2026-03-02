@@ -173,6 +173,7 @@ class ClaudeClient:
         system: str | None = None,
         usage_out: TokenUsage | None = None,
         chat_id: int | None = None,
+        message_id: int | None = None,
     ) -> AsyncIterator[StreamEvent]:
         """
         Agentic tool-use loop: stream Claude's response, handle tool calls,
@@ -334,7 +335,7 @@ class ClaudeClient:
                 )
 
                 try:
-                    result = await tool_registry.dispatch(tool_name, tool_input, user_id, chat_id)
+                    result = await tool_registry.dispatch(tool_name, tool_input, user_id, chat_id, message_id)
                 except Exception as exc:
                     logger.error(
                         "Tool dispatch failed for %s (id=%s): %s",

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -17,6 +19,12 @@ from remy.ai.tools.automations import (
 
 
 USER_ID = 42
+
+# Generate fixtures in local AEST/AEDT time — the executor treats naive datetimes
+# as Australia/Canberra, so UTC-based offsets would be misinterpreted.
+_LOCAL_TZ = ZoneInfo("Australia/Canberra")
+_FUTURE_LOCAL = (datetime.now(_LOCAL_TZ) + timedelta(hours=12)).strftime("%Y-%m-%dT%H:%M:%S")
+_PAST_LOCAL = (datetime.now(_LOCAL_TZ) - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%S")
 
 
 def make_registry(**kwargs) -> MagicMock:
@@ -35,34 +43,47 @@ class TestExecScheduleReminder:
 
     @pytest.mark.asyncio
     async def test_no_store_returns_not_available(self):
-        """Should return not available when automation store not configured."""
         registry = make_registry(automation_store=None)
         result = await exec_schedule_reminder(registry, {"label": "Test"}, USER_ID)
         assert "not available" in result.lower()
 
     @pytest.mark.asyncio
     async def test_requires_label(self):
-        """Should require a reminder label."""
         store = AsyncMock()
         registry = make_registry(automation_store=store)
-        
         result = await exec_schedule_reminder(registry, {"label": ""}, USER_ID)
         assert "provide" in result.lower() or "label" in result.lower()
 
     @pytest.mark.asyncio
-    async def test_returns_string_result(self):
-        """Should return a string result."""
+    async def test_daily_reminder_created(self):
         store = AsyncMock()
-        store.add_reminder = AsyncMock(return_value=123)
+        store.add = AsyncMock(return_value=123)
         registry = make_registry(automation_store=store)
-        
+
         result = await exec_schedule_reminder(registry, {
             "label": "Daily standup",
+            "frequency": "daily",
             "time": "09:00",
-            "days": "mon,tue,wed,thu,fri",
         }, USER_ID)
-        
-        assert isinstance(result, str)
+
+        assert "123" in result
+        assert "daily" in result.lower()
+        store.add.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_weekly_reminder_includes_day(self):
+        store = AsyncMock()
+        store.add = AsyncMock(return_value=7)
+        registry = make_registry(automation_store=store)
+
+        result = await exec_schedule_reminder(registry, {
+            "label": "Weekly review",
+            "frequency": "weekly",
+            "time": "10:00",
+            "day": "fri",
+        }, USER_ID)
+
+        assert "Friday" in result
 
 
 class TestExecListReminders:
@@ -70,20 +91,56 @@ class TestExecListReminders:
 
     @pytest.mark.asyncio
     async def test_no_store_returns_not_available(self):
-        """Should return not available when automation store not configured."""
         registry = make_registry(automation_store=None)
         result = await exec_list_reminders(registry, USER_ID)
         assert "not available" in result.lower()
 
     @pytest.mark.asyncio
-    async def test_returns_string_result(self):
-        """Should return a string result."""
+    async def test_empty_list(self):
         store = AsyncMock()
-        store.get_reminders = AsyncMock(return_value=[])
+        store.get_all = AsyncMock(return_value=[])
         registry = make_registry(automation_store=store)
-        
+
         result = await exec_list_reminders(registry, USER_ID)
-        assert isinstance(result, str)
+        assert "no reminders" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_recurring_reminder_format(self):
+        store = AsyncMock()
+        store.get_all = AsyncMock(return_value=[{
+            "id": 1,
+            "label": "Daily standup",
+            "cron": "0 9 * * *",
+            "fire_at": None,
+            "last_run_at": None,
+        }])
+        registry = make_registry(automation_store=store)
+
+        result = await exec_list_reminders(registry, USER_ID)
+        assert "[ID 1]" in result
+        assert "Daily standup" in result
+        assert "daily" in result.lower()
+        assert "09:00" in result
+
+    @pytest.mark.asyncio
+    async def test_one_time_reminder_shows_friendly_time(self):
+        store = AsyncMock()
+        store.get_all = AsyncMock(return_value=[{
+            "id": 5,
+            "label": "Call dentist",
+            "cron": "",
+            "fire_at": "2026-03-15T10:30:00",
+            "last_run_at": None,
+        }])
+        registry = make_registry(automation_store=store)
+
+        result = await exec_list_reminders(registry, USER_ID)
+        assert "[ID 5]" in result
+        assert "Call dentist" in result
+        assert "once" in result.lower()
+        # Should show friendly format, not raw ISO
+        assert "2026-03-15T10:30:00" not in result
+        assert "10:30" in result
 
 
 class TestExecRemoveReminder:
@@ -91,19 +148,36 @@ class TestExecRemoveReminder:
 
     @pytest.mark.asyncio
     async def test_no_store_returns_not_available(self):
-        """Should return not available when automation store not configured."""
         registry = make_registry(automation_store=None)
-        result = await exec_remove_reminder(registry, {"reminder_id": 1}, USER_ID)
+        result = await exec_remove_reminder(registry, {"id": 1}, USER_ID)
         assert "not available" in result.lower()
 
     @pytest.mark.asyncio
-    async def test_requires_reminder_id(self):
-        """Should require a reminder ID."""
+    async def test_requires_id(self):
         store = AsyncMock()
         registry = make_registry(automation_store=store)
-        
-        result = await exec_remove_reminder(registry, {"reminder_id": None}, USER_ID)
+        result = await exec_remove_reminder(registry, {}, USER_ID)
         assert "provide" in result.lower() or "id" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_removes_existing_reminder(self):
+        store = AsyncMock()
+        store.remove = AsyncMock(return_value=True)
+        registry = make_registry(automation_store=store)
+
+        result = await exec_remove_reminder(registry, {"id": 3}, USER_ID)
+        assert "3" in result
+        store.remove.assert_called_once_with(USER_ID, 3)
+
+    @pytest.mark.asyncio
+    async def test_not_found_returns_error(self):
+        store = AsyncMock()
+        store.remove = AsyncMock(return_value=False)
+        registry = make_registry(automation_store=store)
+
+        result = await exec_remove_reminder(registry, {"id": 99}, USER_ID)
+        assert "99" in result
+        assert "not found" in result.lower() or "no reminder" in result.lower()
 
 
 class TestExecSetOneTimeReminder:
@@ -111,24 +185,73 @@ class TestExecSetOneTimeReminder:
 
     @pytest.mark.asyncio
     async def test_no_store_returns_not_available(self):
-        """Should return not available when automation store not configured."""
         registry = make_registry(automation_store=None)
-        result = await exec_set_one_time_reminder(registry, {"message": "Test"}, USER_ID)
+        result = await exec_set_one_time_reminder(registry, {"label": "Test"}, USER_ID)
         assert "not available" in result.lower()
 
     @pytest.mark.asyncio
-    async def test_returns_string_result(self):
-        """Should return a string result."""
+    async def test_requires_label(self):
         store = AsyncMock()
-        store.add_one_time_reminder = AsyncMock(return_value=456)
         registry = make_registry(automation_store=store)
-        
-        result = await exec_set_one_time_reminder(registry, {
-            "message": "Call dentist",
-            "minutes": 30,
-        }, USER_ID)
-        
-        assert isinstance(result, str)
+        result = await exec_set_one_time_reminder(
+            registry, {"label": "", "fire_at": _FUTURE_LOCAL}, USER_ID
+        )
+        assert "label" in result.lower() or "provide" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_requires_fire_at(self):
+        store = AsyncMock()
+        registry = make_registry(automation_store=store)
+        result = await exec_set_one_time_reminder(
+            registry, {"label": "Call dentist", "fire_at": ""}, USER_ID
+        )
+        assert "fire_at" in result.lower() or "provide" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_invalid_fire_at_format(self):
+        store = AsyncMock()
+        registry = make_registry(automation_store=store)
+        result = await exec_set_one_time_reminder(
+            registry, {"label": "Test", "fire_at": "not-a-date"}, USER_ID
+        )
+        assert "invalid" in result.lower() or "format" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_past_time_rejected(self):
+        store = AsyncMock()
+        registry = make_registry(automation_store=store)
+        result = await exec_set_one_time_reminder(
+            registry, {"label": "Already gone", "fire_at": _PAST_LOCAL}, USER_ID
+        )
+        assert "past" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_creates_reminder_with_future_time(self):
+        store = AsyncMock()
+        store.add = AsyncMock(return_value=42)
+        registry = make_registry(automation_store=store)
+
+        result = await exec_set_one_time_reminder(
+            registry, {"label": "Call dentist", "fire_at": _FUTURE_LOCAL}, USER_ID
+        )
+
+        assert "42" in result
+        assert "Call dentist" in result
+        store.add.assert_called_once_with(USER_ID, "Call dentist", cron="", fire_at=_FUTURE_LOCAL)
+
+    @pytest.mark.asyncio
+    async def test_confirmation_shows_friendly_time(self):
+        store = AsyncMock()
+        store.add = AsyncMock(return_value=5)
+        registry = make_registry(automation_store=store)
+
+        result = await exec_set_one_time_reminder(
+            registry, {"label": "Stand up and stretch", "fire_at": "2026-06-01T14:30:00"}, USER_ID
+        )
+
+        # Confirmation should include formatted time, not raw ISO string
+        assert "2026-06-01T14:30:00" not in result
+        assert "14:30" in result
 
 
 class TestExecBreakdownTask:
@@ -136,18 +259,16 @@ class TestExecBreakdownTask:
 
     @pytest.mark.asyncio
     async def test_requires_task(self):
-        """Should require a task description."""
         registry = make_registry()
         result = await exec_breakdown_task(registry, {"task": ""})
         assert "provide" in result.lower() or "task" in result.lower()
 
     @pytest.mark.asyncio
     async def test_returns_string_result(self):
-        """Should return a string result."""
         claude = AsyncMock()
         claude.complete = AsyncMock(return_value="1. Step one\n2. Step two")
         registry = make_registry(claude_client=claude)
-        
+
         result = await exec_breakdown_task(registry, {"task": "Plan a party"})
         assert isinstance(result, str)
 
@@ -157,28 +278,25 @@ class TestExecGroceryList:
 
     @pytest.mark.asyncio
     async def test_show_action_returns_string(self):
-        """Should return a string result for show action."""
         ks = AsyncMock()
         ks.get_by_type = AsyncMock(return_value=[])
         registry = make_registry(knowledge_store=ks)
-        
+
         result = await exec_grocery_list(registry, {"action": "show"}, USER_ID)
         assert isinstance(result, str)
 
     @pytest.mark.asyncio
     async def test_add_action_requires_items(self):
-        """Should require items to add."""
         ks = AsyncMock()
         registry = make_registry(knowledge_store=ks)
-        
+
         result = await exec_grocery_list(registry, {"action": "add", "items": ""}, USER_ID)
         assert "specify" in result.lower() or "provide" in result.lower()
 
     @pytest.mark.asyncio
     async def test_unknown_action_returns_error(self):
-        """Should return error for unknown action."""
         ks = AsyncMock()
         registry = make_registry(knowledge_store=ks)
-        
+
         result = await exec_grocery_list(registry, {"action": "unknown"}, USER_ID)
         assert "unknown" in result.lower()

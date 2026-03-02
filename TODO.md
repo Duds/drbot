@@ -4,7 +4,7 @@
 
 ## 🎯 Philosophy: Simplicity > Complexity
 
-Remy's success relies on being **lean, secure, and continuously useful**. We avoid my-agent's bloat trap by:
+Remy's success relies on being **lean, secure, and continuously useful**. We avoid bloat trap by:
 
 - Focusing on **workflow automation** that Dale actually uses daily
 - Keeping dependencies minimal and auditable
@@ -233,12 +233,6 @@ This is a **cherry-pick from my-agent** (which had partial support) but implemen
   - `/grocery-list done <item>` — remove completed item
   - `/grocery-list clear` — empty the list
 
-~~### 4.3 Digital Fingerprint Audit~~
-~~- [ ] **Privacy audit** — conversation-based via Claude + Board; deferred (no new code needed, just prompting)~~
-
-~~### 4.4 Platform Avoidance~~
-~~- [ ] **`/research-alternative <platform>`** — covered by `/research` already; deferred as named command~~
-
 ---
 
 ## 🤝 Phase 5: Smart Behavioral Automation ✅ Complete
@@ -350,9 +344,15 @@ Deferred until Steps 1 & 2 are proven insufficient. Requires replacing `ClaudeCl
 - [ ] Evaluate `claude-agent-sdk` (`pip install claude-agent-sdk`) as a replacement for the
       manual tool-use loop in `remy/ai/claude_client.py`
 - [ ] Define named subagents for different capability profiles:
-  - `deep-researcher` — Opus 4.6, web search + file read, runs on background task
-  - `board-analyst` — Opus 4.6, read-only, orchestrates the 5 Board agents
+  - `deep-researcher` — Sonnet 4.6, web search + file read, runs on background task
+  - `board-analyst` — Sonnet 4.6, read-only, orchestrates the 5 Board agents
   - `quick-assistant` — Sonnet 4.6 (current default), all tools, interactive
+  - `chief-financial-officer` — Sonnet 4.6, finance-focused: budgeting, expense tracking & categorisation, invoice and receipt reconciliation, monthly cash‑flow forecasting, cost‑savings analysis, and billing/reminder automation. Read-only by default; any write or transaction actions require explicit user confirmation and secure token gating. Produces spreadsheet-friendly reports and short actionable recommendations for reducing recurring costs.
+  - `code-reviewer` — Sonnet 4.6, optimized for reading and explaining code, with repo access and linting tools; handy for PR reviews and coding assistance.
+  - `meeting-summarizer` — focused on rapidly condensing transcripts or notes into action items and highlights.
+  - `wellness-coach` — provides brief motivational prompts and tracks simple health/habit metrics.
+  - `project-manager` — keeps an eye on tasks, deadlines, and reminds you of upcoming milestones.
+  - (add other specialised agents as new needs arise)
 - [ ] Subagents can run on **different models** — cheap Haiku for classification,
       Opus for deep analysis — without changing the main conversation model
 - **Constraint:** Subagents cannot spawn their own subagents (no `Task` tool in subagent's tools)
@@ -424,8 +424,12 @@ These were in my-agent and caused bloat. **Do not implement.**
 | **C**    | Telegram Markdown header/formatting fixes                          | US-telegram-markdown-fix            | ✅ Done                      |
 | **S**    | Telegram catch-all error handler                                   | US-telegram-error-handler           | ✅ Done                      |
 | **S**    | Multi-Model Orchestration (Mistral, Moonshot)                      | US-model-orchestration              | ✅ Done                      |
+| **S**    | Cloudflare Tunnel — remote log/telemetry access                    | US-cloudflare-tunnel-remote-observability | 🔄 In Progress (setup on Mac Mini pending) |
 | **S**    | Claude Agent SDK subagents                                         | US-claude-agent-sdk-subagents       | ⬜ Deferred (major refactor) |
 | **S**    | Gmail send                                                         | —                                   | ⬜ Deferred (security)       |
+| **C**    | Fix one-time automation double-fire on restart (bug)               | US-automation-double-fire           | ✅ Done                      |
+| **C**    | Streaming reply overflow split safety (bug)                        | US-streaming-overflow-safety        | ⬜ P3 (low priority)         |
+| **C**    | Fix primp impersonation header warning (bug)                       | US-primp-impersonation-warning      | ⬜ P3 (low priority)         |
 | **W**    | Headless browser automation                                        | —                                   | ❌ Avoid                     |
 | **W**    | Knowledge graph + vector store                                     | —                                   | ❌ Avoid                     |
 
@@ -434,6 +438,11 @@ These were in my-agent and caused bloat. **Do not implement.**
 ## 📍 Next Steps — Prioritised Backlog
 
 ### P1 — Immediate (small–medium, clear value)
+
+1. **Cloudflare Tunnel setup** (`US-cloudflare-tunnel-remote-observability`) — code done; one-time infra setup on Mac Mini still needed
+   - Create tunnel in Cloudflare Zero Trust dashboard, name it `remy`
+   - Set `CLOUDFLARE_TUNNEL_TOKEN` and `HEALTH_API_TOKEN` in `.env` on Mac Mini
+   - Run `make tunnel-up` — then verify with `make telemetry HOST=remy.<domain> TOKEN=<token>`
 
 1. ~~**Multi-Model Orchestration** — complete~~
 1. ~~**Fix tool dispatch exception recovery** — complete~~
@@ -493,6 +502,12 @@ These were in my-agent and caused bloat. **Do not implement.**
 14. **Google Wallet alerts** (`US-google-wallet-monitoring`)
     - Tasker profile → `/webhook/notification`; depends on SMS infrastructure
 
+15. **Streaming reply overflow safety** (`US-streaming-overflow-safety`)
+    - Add debug assertion `len(part) <= 4096` in the overflow split path of `StreamingReply._flush()`
+
+16. **primp impersonation warning** (`US-primp-impersonation-warning`)
+    - Suppress or eliminate `[WARNING] primp.impersonate: Impersonate 'chrome_114' does not exist` log noise from `ddgs` web searches
+
 ### Deferred (explicit non-starters for now)
 
 9. **Claude Agent SDK subagents** (`US-claude-agent-sdk-subagents`) — major refactor; only revisit if BackgroundTaskRunner + persistent jobs prove insufficient
@@ -533,24 +548,6 @@ Phase 2.1 gave Dale a `/write` command to write files via a two-step flow. What 
 - Remy announces intent before every write — no silent modifications
 
 ---
-
-## 🐛 Bug: Tool Status Text Leaking into Telegram Messages
-
-- [x] **Suppress inter-tool TextChunks from being streamed to user**
-  - **Symptom:** Messages like "using list_directory" or "using get_logs" appear in Remy's
-    Telegram replies mid-response, as if they are part of the answer.
-  - **Root cause:** In `bot/handlers.py`, the tool-aware processing loop passes `TextChunk`
-    events directly to `StreamingReply.feed()` regardless of whether they arrive _between_
-    tool calls (i.e. before `ToolTurnComplete` has fired). Claude emits brief status-style
-    text fragments between tool invocations — these should be logged only, not streamed.
-  - **Fix location:** `bot/handlers.py` — tool-aware path (Path A), inside the
-    `async for event in claude_client.stream_with_tools(...)` loop.
-  - **Fix:** Gate `StreamingReply.feed()` on a flag (`in_tool_turn: bool`). Set it `True`
-    on `ToolStatusChunk`, `False` on `ToolTurnComplete`. While `in_tool_turn` is `True`,
-    log `TextChunk.text` at DEBUG level but do NOT feed it to the streamer.
-  - **`streaming.py` is clean** — no changes needed there.
-  - **Test:** Ask Remy to list a directory. Confirm "using list_directory" no longer
-    appears in the Telegram reply. Confirm tool results still appear correctly.
 
 ## 🏷️ Pending: Gmail Label Creation
 
@@ -594,53 +591,6 @@ receipts, screenshots, food photos, etc.
 ### 7.3–7.4 Security & Implementation ✅
 
 All constraints from the spec implemented: in-memory only, 5MB cap, MIME allowlist, no URL fetching.
-
----
-
-## 🐛 Minor Bugs (no full US needed)
-
-These are tracked here inline; fix alongside related work rather than as standalone stories.
-
-### One-time automation double-fire on restart (`scheduler/proactive.py:257`)
-
-- **Symptom:** If the bot restarts within the 5-minute APScheduler `misfire_grace_time` window
-  after a one-time automation fired, `load_user_automations()` re-registers the job with a
-  past `DateTrigger` and APScheduler fires it again immediately.
-- **Root cause:** `_run_automation()` deletes the DB row _after_ firing. If the bot restarts
-  between fire and delete, the row still exists and the job is re-registered.
-- **Fix:** Mark the automation row as `status='fired'` (or delete it) _before_ sending the
-  reminder. Then `load_user_automations()` should skip rows with `status='fired'`.
-  Requires adding a `status` column to the `automations` table or using `fire_at` comparison.
-
-### Streaming reply overflow split safety (`bot/streaming.py:84`)
-
-- **Symptom:** Very long messages (>4000 chars, no space before limit) fall back to splitting
-  at exactly 4000 chars. The `" …"` suffix can push the display string to 4003 chars, still
-  within Telegram's 4096 limit but worth monitoring.
-- **Fix:** Low priority — add a `len(display) <= 4096` assertion in debug mode.
-
-### Backlog: Add Telegram catch-all error handler
-
-**User Story:** As Dale, I want unhandled Telegram exceptions to be caught and logged cleanly, so that errors don't produce noisy log spam and I can diagnose issues more easily.
-
-**Context:** Logs show 8+ instances of `telegram.ext.Application: No error handlers are registered, logging exception.` — unhandled exceptions are falling through with no structured handling.
-
-**Acceptance Criteria:**
-- Register a catch-all error handler on the `Application` instance (e.g. `application.add_error_handler(error_handler)`)
-- Handler logs the exception at ERROR level with context (user ID, update type)
-- Handler optionally notifies Dale via Telegram for unexpected/critical errors
-- No more "No error handlers are registered" log noise
-
-**Component:** `bot/handlers.py` or `main.py`
-**Priority:** Low
-**Related:** BUG-003
-
-## 🐛 Bug: primp impersonation header warning
-
-- **Symptom:** `[WARNING] primp.impersonate: Impersonate 'chrome_114' does not exist, using 'random'` — logged repeatedly during web requests
-- **Cause:** `chrome_114` is not a valid impersonation target in the current version of `primp`
-- **Fix:** Update the impersonation string to a valid value (e.g. `chrome_120` or whichever is current) or remove the explicit impersonation and rely on the `random` fallback intentionally
-- **Priority:** Low (non-breaking, but noisy)
 
 ---
 

@@ -14,12 +14,19 @@ Endpoints:
   GET /ready       → 200 {"status": "ready"} or 503 {"status": "starting"}
   GET /metrics     → Prometheus metrics in text format
   GET /diagnostics → 200 Comprehensive system diagnostics (JSON)
+  GET /logs        → Recent log lines (plain text). Auth required if HEALTH_API_TOKEN set.
+                     Query params: lines (default 100), level (ERROR/WARNING/INFO),
+                                   since (startup|1h|6h|24h|all)
+  GET /telemetry   → JSON summary of API call stats from the last 24h.
+                     Auth required if HEALTH_API_TOKEN set.
+                     Query params: window (1h|6h|24h|7d, default 24h)
 """
 
 import asyncio
 import logging
 import os
 import time
+from datetime import datetime, timedelta, timezone
 from typing import Awaitable, Callable
 
 logger = logging.getLogger(__name__)
@@ -31,6 +38,10 @@ _READY = False  # flipped to True after DB init completes
 _DIAGNOSTICS_RUNNER = None
 _OUTBOUND_QUEUE = None
 _HOOK_MANAGER = None
+
+# Late-bound references for /logs and /telemetry
+_DB = None        # DatabaseManager — set via set_db()
+_DATA_DIR = "./data"  # path to data directory — set via set_data_dir()
 
 
 def set_diagnostics_runner(runner) -> None:
@@ -49,6 +60,38 @@ def set_hook_manager(manager) -> None:
     """Set the hook manager for diagnostics stats."""
     global _HOOK_MANAGER
     _HOOK_MANAGER = manager
+
+
+def set_db(db) -> None:
+    """Set the DatabaseManager for /telemetry endpoint."""
+    global _DB
+    _DB = db
+
+
+def set_data_dir(data_dir: str) -> None:
+    """Set the data directory path for /logs endpoint."""
+    global _DATA_DIR
+    _DATA_DIR = data_dir
+
+
+def _check_token(request) -> bool:
+    """
+    Return True if the request passes token auth.
+
+    If HEALTH_API_TOKEN is not set (or empty), all requests pass.
+    Otherwise, the token must be supplied via:
+      - Authorization: Bearer <token>  header, or
+      - ?token=<token>                 query param
+    """
+    token = os.environ.get("HEALTH_API_TOKEN", "").strip()
+    if not token:
+        return True
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer ") and auth_header[7:] == token:
+        return True
+    if request.rel_url.query.get("token") == token:
+        return True
+    return False
 
 
 def set_ready() -> None:
@@ -161,6 +204,177 @@ async def _handle_diagnostics(request) -> "aiohttp.web.Response":
         return web.json_response({"error": str(e)}, status=500)
 
 
+async def _handle_logs(request) -> "aiohttp.web.Response":
+    """
+    Serve recent log lines from data/logs/remy.log.
+
+    Query params:
+      lines  — number of lines to return (default 100, max 500)
+      level  — filter to ERROR / WARNING / INFO (omit for all)
+      since  — startup | 1h | 6h | 24h | all (default: startup)
+    """
+    from aiohttp import web  # type: ignore[import]
+
+    if not _check_token(request):
+        return web.Response(status=401, text="401 Unauthorized — set Authorization: Bearer <HEALTH_API_TOKEN>")
+
+    from .diagnostics.logs import get_recent_logs, get_error_summary, since_dt, get_session_start_line
+
+    try:
+        lines = min(int(request.rel_url.query.get("lines", "100")), 500)
+    except ValueError:
+        lines = 100
+
+    level = request.rel_url.query.get("level", "").upper() or None
+    since_param = request.rel_url.query.get("since", "startup")
+
+    since_line = None
+    since_ts = None
+    if since_param == "startup":
+        since_line = get_session_start_line(_DATA_DIR)
+    elif since_param != "all":
+        since_ts = since_dt(since_param)
+
+    if level == "ERROR":
+        text = get_error_summary(_DATA_DIR, max_items=lines, since=since_ts, since_line=since_line)
+    else:
+        text = get_recent_logs(_DATA_DIR, lines=lines, level=level, since=since_ts, since_line=since_line)
+
+    return web.Response(text=text, content_type="text/plain")
+
+
+async def _handle_telemetry(request) -> "aiohttp.web.Response":
+    """
+    Return a JSON summary of API call telemetry from the api_calls table.
+
+    Query params:
+      window — 1h | 6h | 24h | 7d (default: 24h)
+    """
+    from aiohttp import web  # type: ignore[import]
+
+    if not _check_token(request):
+        return web.json_response({"error": "Unauthorized — set Authorization: Bearer <HEALTH_API_TOKEN>"}, status=401)
+
+    if _DB is None:
+        return web.json_response({"error": "Database not available"}, status=503)
+
+    window_param = request.rel_url.query.get("window", "24h")
+    window_hours = {"1h": 1, "6h": 6, "24h": 24, "7d": 168}.get(window_param, 24)
+    since = datetime.now(timezone.utc) - timedelta(hours=window_hours)
+
+    try:
+        async with _DB.get_connection() as conn:
+            rows = await conn.execute_fetchall(
+                """
+                SELECT provider, model, call_site,
+                       input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
+                       latency_ms, ttft_ms, tool_execution_ms, memory_injection_ms,
+                       fallback, timestamp
+                FROM api_calls
+                WHERE timestamp >= ?
+                ORDER BY timestamp DESC
+                LIMIT 500
+                """,
+                (since.isoformat(),),
+            )
+    except Exception as e:
+        logger.error("Telemetry query failed: %s", e)
+        return web.json_response({"error": str(e)}, status=500)
+
+    rows = [dict(r) for r in rows]
+
+    # Aggregate stats
+    total_calls = len(rows)
+    total_input = sum(r["input_tokens"] or 0 for r in rows)
+    total_output = sum(r["output_tokens"] or 0 for r in rows)
+    total_cache_read = sum(r["cache_read_tokens"] or 0 for r in rows)
+    total_cache_write = sum(r["cache_creation_tokens"] or 0 for r in rows)
+    fallback_calls = sum(1 for r in rows if r["fallback"])
+
+    latencies = [r["latency_ms"] for r in rows if r.get("latency_ms")]
+    ttfts = [r["ttft_ms"] for r in rows if r.get("ttft_ms")]
+
+    def _percentile(values: list, pct: int) -> int:
+        if not values:
+            return 0
+        s = sorted(values)
+        idx = int(len(s) * pct / 100)
+        return s[min(idx, len(s) - 1)]
+
+    avg_latency = int(sum(latencies) / len(latencies)) if latencies else 0
+    p95_latency = _percentile(latencies, 95)
+    avg_ttft = int(sum(ttfts) / len(ttfts)) if ttfts else 0
+
+    # Cache hit rate: cache_read / (cache_read + input)
+    total_effective_input = total_input + total_cache_read
+    cache_hit_rate = round(total_cache_read / total_effective_input, 3) if total_effective_input else 0.0
+
+    # Per-model breakdown
+    by_model: dict = {}
+    for r in rows:
+        key = r["model"] or "unknown"
+        if key not in by_model:
+            by_model[key] = {"calls": 0, "input_tokens": 0, "output_tokens": 0,
+                             "cache_read_tokens": 0, "latencies": []}
+        m = by_model[key]
+        m["calls"] += 1
+        m["input_tokens"] += r["input_tokens"] or 0
+        m["output_tokens"] += r["output_tokens"] or 0
+        m["cache_read_tokens"] += r["cache_read_tokens"] or 0
+        if r.get("latency_ms"):
+            m["latencies"].append(r["latency_ms"])
+
+    by_model_clean = {
+        k: {
+            "calls": v["calls"],
+            "input_tokens": v["input_tokens"],
+            "output_tokens": v["output_tokens"],
+            "cache_read_tokens": v["cache_read_tokens"],
+            "avg_latency_ms": int(sum(v["latencies"]) / len(v["latencies"])) if v["latencies"] else 0,
+        }
+        for k, v in sorted(by_model.items(), key=lambda x: -x[1]["calls"])
+    }
+
+    # Recent 20 calls for the timeline view
+    recent = [
+        {
+            "timestamp": r["timestamp"],
+            "model": r["model"],
+            "call_site": r["call_site"],
+            "input_tokens": r["input_tokens"],
+            "output_tokens": r["output_tokens"],
+            "cache_read_tokens": r["cache_read_tokens"],
+            "latency_ms": r["latency_ms"],
+            "ttft_ms": r["ttft_ms"],
+            "tool_execution_ms": r["tool_execution_ms"],
+            "memory_injection_ms": r["memory_injection_ms"],
+            "fallback": bool(r["fallback"]),
+        }
+        for r in rows[:20]
+    ]
+
+    return web.json_response({
+        "window": window_param,
+        "since": since.isoformat(),
+        "total_calls": total_calls,
+        "fallback_calls": fallback_calls,
+        "tokens": {
+            "input": total_input,
+            "output": total_output,
+            "cache_read": total_cache_read,
+            "cache_write": total_cache_write,
+        },
+        "latency_ms": {
+            "avg": avg_latency,
+            "p95": p95_latency,
+        },
+        "avg_ttft_ms": avg_ttft,
+        "cache_hit_rate": cache_hit_rate,
+        "by_model": by_model_clean,
+        "recent_calls": recent,
+    })
+
+
 async def run_health_server(port: int | None = None) -> None:
     """
     Start the aiohttp health server on the given port.
@@ -191,6 +405,8 @@ async def run_health_server(port: int | None = None) -> None:
     app.router.add_get("/ready", _handle_ready)
     app.router.add_get("/metrics", _handle_metrics)
     app.router.add_get("/diagnostics", _handle_diagnostics)
+    app.router.add_get("/logs", _handle_logs)
+    app.router.add_get("/telemetry", _handle_telemetry)
 
     runner = web.AppRunner(app, access_log=None)  # suppress per-request noise
     await runner.setup()

@@ -92,11 +92,19 @@ _Last updated: see file history_
 
 - **Symptom:** `[Errno 36] File name too long` when injecting memory context
 - **Impact:** Memory injection fails entirely, Remy runs without memory context injected into prompts
-- **Likely cause:** `_get_project_context()` in `injector.py` treats fact content as a directory path without validating it's actually a path. Long descriptions stored with `category: "project"` cause OS filename length errors.
+- **Root cause:** Two issues in `_get_project_context()` in `remy/memory/injector.py`:
+  1. `readme.exists()` was called outside any try/except — `OSError [Errno 36]` propagated uncaught through `asyncio.gather`, crashing the entire `build_context()` call
+  2. The DB query fetches all facts with `category: "project"`, but descriptive project facts (not paths) get fed directly into `Path(path_str)`. A long description with no `/` separators becomes a single oversized path component, triggering the OS error on `.exists()` / `stat()`
+- **Note:** Previously marked ✅ Fixed in error — the fix was never committed (absent from commit `8ec6af3` which repaired bugs 5/6/7/9/10/11)
 - **Priority:** High
 - **Status:** ✅ Fixed
-- **Fix:** Added validation in `_get_project_context()` to skip content that doesn't start with `/` or exceeds 255 characters. Added unit tests.
+- **Fix:**
+  - Added pre-loop validation: skip `path_str` that does not start with `/` (not an absolute path)
+  - Added pre-loop validation: skip `path_str` where any path component exceeds 255 bytes
+  - Moved `readme.exists()` and read inside a per-entry `try/except` so one bad path cannot abort the whole function
+  - Added 5 regression tests to `tests/test_memory_injector_extra.py` covering: long descriptive text, relative paths, oversized components, valid paths still working, mixed valid/invalid entries
 - **Reported:** 2026-02-28
+- **Actually fixed:** 2026-03-02
 
 ---
 
@@ -141,3 +149,70 @@ _Last updated: see file history_
 - **Status:** ✅ Fixed
 - **Fix:** `get_session_key()` now reads `settings.scheduler_timezone` and uses `zoneinfo.ZoneInfo` to get the user's local date. Session files now roll over at local midnight (AEST/AEDT) rather than UTC midnight. Existing UTC-dated session files are unaffected — they remain on disk and are accessible via `get_all_sessions()`.
 - **Reported:** 2026-03-01
+
+---
+
+## Bug 12: Tool Status Text Leaking into Telegram Messages
+
+- **Symptom:** Messages like "using list_directory" or "using get_logs" appear in Remy's Telegram replies mid-response, as if they are part of the answer.
+- **Root cause:** In `bot/handlers.py`, the tool-aware processing loop passes `TextChunk` events directly to `StreamingReply.feed()` regardless of whether they arrive between tool calls (i.e. before `ToolTurnComplete` has fired). Claude emits brief status-style text fragments between tool invocations — these should be logged only, not streamed.
+- **Fix:** Gate `StreamingReply.feed()` on a flag (`in_tool_turn: bool`). Set it `True` on `ToolStatusChunk`, `False` on `ToolTurnComplete`. While `in_tool_turn` is `True`, log `TextChunk.text` at DEBUG level but do NOT feed it to the streamer.
+- **Location:** `bot/handlers.py` — tool-aware path (Path A), inside the `async for event in claude_client.stream_with_tools(...)` loop.
+- **Priority:** Medium
+- **Status:** ✅ Fixed
+
+---
+
+## Bug 13: One-time automation double-fire on restart
+
+- **Symptom:** If the bot restarts within the 5-minute APScheduler `misfire_grace_time` window after a one-time automation fired, `load_user_automations()` re-registers the job with a past `DateTrigger` and APScheduler fires it again immediately.
+- **Impact:** One-time reminders fire twice after bot restart.
+- **Root cause:** `_run_automation()` deletes the DB row _after_ firing. If the bot restarts between fire and delete, the row still exists and the job is re-registered.
+- **Fix:** `_run_automation()` now deletes the one-time automation row **before** sending the reminder (`scheduler/proactive.py:331–340`). Comment: `# Perform DB cleanup BEFORE sending to avoid double-firing on crashes`. On restart, `load_user_automations()` finds no row and does not re-register the job.
+- **Location:** `scheduler/proactive.py:331`
+- **Priority:** Low
+- **Status:** ✅ Fixed
+
+---
+
+## Bug 14: Streaming reply overflow split safety
+
+- **Symptom:** Very long messages (>4000 chars, no space before limit) fall back to splitting at exactly 4000 chars. The `" …"` suffix can push the display string to 4003 chars, still within Telegram's 4096 limit but worth monitoring.
+- **Fix:** Add a `len(display) <= 4096` assertion in debug mode.
+- **Location:** `bot/streaming.py:84`
+- **Priority:** Low
+- **Status:** Open
+
+---
+
+## Bug 15: Telegram catch-all error handler missing
+
+- **Symptom:** Logs show `telegram.ext.Application: No error handlers are registered, logging exception.` — unhandled exceptions fall through with no structured handling.
+- **Impact:** Unhandled Telegram exceptions produce noisy log spam with no Telegram notification for Dale.
+- **Root cause:** No error handler registered on the `Application` instance.
+- **Fix:** Register a catch-all error handler on the `Application` instance (`application.add_error_handler(error_handler)`). Handler logs at ERROR level with context (user ID, update type); optionally notifies Dale via Telegram for unexpected/critical errors.
+- **Location:** `bot/handlers.py` or `main.py`
+- **Priority:** Low
+- **Status:** ✅ Fixed
+
+---
+
+## Bug 17: Final message edit strips MarkdownV2 rendering
+
+- **Symptom:** During streaming, markdown renders correctly (bold, italic etc.) in Telegram. When the final message is settled, the text reverts to raw markdown symbols (e.g. `*bold*` instead of **bold**).
+- **Root cause:** `_flush_display(final=True)` is called twice (lines 319 and 324 in `chat.py`). The first call succeeds with `parse_mode="MarkdownV2"`. The second call (0.3s later) sends the identical formatted text — Telegram raises `BadRequest: Message is not modified`. The old `except Exception:` block caught this and then called `sent.edit_text(truncated)` with **no `parse_mode`**, which succeeded and overwrote the rendered message with raw CommonMark text.
+- **Location:** `remy/bot/handlers/chat.py` — `_flush_display()` inner function
+- **Fix:** Imported `BadRequest` from `telegram.error`. Changed `except Exception:` to `except BadRequest as e:`. If the error is "message is not modified", return immediately (the message is already correctly formatted). Only fall back to plain text for actual MarkdownV2 parse failures.
+- **Priority:** High
+- **Status:** ✅ Fixed
+- **Reported:** 2026-03-02
+
+---
+
+## Bug 16: primp impersonation header warning
+
+- **Symptom:** `[WARNING] primp.impersonate: Impersonate 'chrome_114' does not exist, using 'random'` — logged repeatedly during web requests.
+- **Cause:** `chrome_114` is not a valid impersonation target in the current version of `primp`.
+- **Fix:** Update the impersonation string to a valid value (e.g. `chrome_120`) or remove the explicit impersonation and rely on the `random` fallback intentionally.
+- **Priority:** Low
+- **Status:** Open

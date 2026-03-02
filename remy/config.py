@@ -120,6 +120,10 @@ class Settings(BaseSettings):
     cb_failure_threshold: int = 5
     cb_recovery_timeout: float = 60.0
 
+    # ── Health API ──────────────────────────────────────────────────────────────
+    # If set, /logs and /telemetry require Authorization: Bearer <token> or ?token=
+    health_api_token: str = ""
+
     # ── Intervals (seconds) ─────────────────────────────────────────────────────
     health_check_interval: int = 300
     stale_goal_days: int = 3

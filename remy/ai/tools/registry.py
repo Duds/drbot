@@ -87,7 +87,12 @@ class ToolRegistry:
         return self._scheduler_ref.get("proactive_scheduler")
 
     async def dispatch(
-        self, tool_name: str, tool_input: dict, user_id: int, chat_id: int | None = None
+        self,
+        tool_name: str,
+        tool_input: dict,
+        user_id: int,
+        chat_id: int | None = None,
+        message_id: int | None = None,
     ) -> str:
         """
         Execute the named tool with the given input.
@@ -98,6 +103,7 @@ class ToolRegistry:
             tool_input: Tool parameters
             user_id: Telegram user ID
             chat_id: Optional Telegram chat ID (for tools that need chat context)
+            message_id: Optional Telegram message ID (for react_to_message)
         """
         try:
             match tool_name:
@@ -328,6 +334,9 @@ class ToolRegistry:
                 case "start_privacy_audit":
                     from .session import exec_start_privacy_audit
                     return await exec_start_privacy_audit(self)
+                case "react_to_message":
+                    from .session import exec_react_to_message
+                    return await exec_react_to_message(self, tool_input, chat_id, message_id)
 
                 case _:
                     return f"Unknown tool: {tool_name}"
