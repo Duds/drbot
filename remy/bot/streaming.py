@@ -105,6 +105,14 @@ class StreamingReply:
             except Exception as e:
                 logger.warning("Could not create overflow message: %s", e)
 
+        # Debug assertion: ensure we don't exceed Telegram's hard limit (4096)
+        if __debug__:
+            try:
+                assert len(display) <= 4096
+            except AssertionError:
+                logger.debug("Display length %d exceeds 4096 — trimming", len(display))
+                display = display[:_TELEGRAM_MAX_LEN]
+
         if display == self._last_sent:
             return  # no change — Telegram would reject identical edit
 

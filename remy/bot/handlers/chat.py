@@ -205,107 +205,136 @@ def make_chat_handlers(
                 except Exception as e:
                     logger.debug("Message edit failed (flood control): %s", e)
 
-        try:
-            rotator.start()
-            from ...models import TokenUsage
-            from ...analytics.call_log import log_api_call
-            usage = TokenUsage()
-            t0 = time.monotonic()
+        def _is_transient_stream_exc(exc: Exception) -> bool:
+            txt = str(exc).lower()
+            return any(c in txt for c in (
+                "incomplete chunked read",
+                "peer closed connection",
+                "connection reset by peer",
+                "remote end closed connection",
+                "unexpected eof",
+            ))
 
-            ttft_recorded = False
-            ttft_timer = PhaseTimer()
-            ttft_timer.start()
-            tool_exec_total_ms = 0
-            tool_exec_start: float | None = None
+        rotator.start()
+        from ...models import TokenUsage
+        from ...analytics.call_log import log_api_call
 
-            await hook_manager.emit(
-                HookEvents.LLM_INPUT,
-                {
-                    "user_id": user_id,
-                    "message_count": len(messages),
-                    "system_prompt_length": len(system_prompt),
-                },
-            )
+        for _attempt in range(2):
+            try:
+                usage = TokenUsage()
+                t0 = time.monotonic()
+                # Reset streaming state so a retry starts clean (Bug 13)
+                current_display = []
+                tool_turns = []
+                in_tool_turn = False
+                last_edit_len = 0
 
-            async for event in claude_client.stream_with_tools(
-                messages=messages,
-                tool_registry=tool_registry,
-                user_id=user_id,
-                system=system_prompt,
-                usage_out=usage,
-                chat_id=chat_id,
-                message_id=message_id,
-            ):
-                if not ttft_recorded:
-                    ttft_timer.stop()
-                    ttft_recorded = True
+                ttft_recorded = False
+                ttft_timer = PhaseTimer()
+                ttft_timer.start()
+                tool_exec_total_ms = 0
+                tool_exec_start: float | None = None
 
+                await hook_manager.emit(
+                    HookEvents.LLM_INPUT,
+                    {
+                        "user_id": user_id,
+                        "message_count": len(messages),
+                        "system_prompt_length": len(system_prompt),
+                    },
+                )
+
+                async for event in claude_client.stream_with_tools(
+                    messages=messages,
+                    tool_registry=tool_registry,
+                    user_id=user_id,
+                    system=system_prompt,
+                    usage_out=usage,
+                    chat_id=chat_id,
+                    message_id=message_id,
+                ):
+                    if not ttft_recorded:
+                        ttft_timer.stop()
+                        ttft_recorded = True
+
+                    if not rotator_stopped:
+                        await rotator.stop()
+                        rotator_stopped = True
+                    if session_manager.is_cancelled(user_id):
+                        shown = "".join(current_display)
+                        try:
+                            await sent.edit_text(
+                                (shown + "\n\n_[cancelled]_").strip(),
+                                parse_mode="Markdown",
+                            )
+                        except Exception as e:
+                            logger.debug("Failed to edit cancelled message: %s", e)
+                        return
+
+                    if isinstance(event, TextChunk):
+                        if in_tool_turn:
+                            logger.debug(
+                                "Suppressing in-tool TextChunk (%d chars) for user %d",
+                                len(event.text), user_id,
+                            )
+                        else:
+                            current_display.append(event.text)
+                            if len("".join(current_display)) - last_edit_len >= 200:
+                                await _flush_display()
+
+                    elif isinstance(event, ToolStatusChunk):
+                        in_tool_turn = True
+                        tool_exec_start = time.monotonic()
+                        await hook_manager.emit(
+                            HookEvents.BEFORE_TOOL_CALL,
+                            {"user_id": user_id, "tool_name": event.tool_name},
+                        )
+                        try:
+                            await sent.edit_text(
+                                f"_⚙️ Using {event.tool_name}…_",
+                                parse_mode="Markdown",
+                            )
+                        except Exception as e:
+                            logger.debug("Failed to update tool status message: %s", e)
+
+                    elif isinstance(event, ToolResultChunk):
+                        pass
+
+                    elif isinstance(event, ToolTurnComplete):
+                        in_tool_turn = False
+                        tool_duration_ms = 0
+                        if tool_exec_start is not None:
+                            tool_duration_ms = int((time.monotonic() - tool_exec_start) * 1000)
+                            tool_exec_total_ms += tool_duration_ms
+                            tool_exec_start = None
+                        await hook_manager.emit(
+                            HookEvents.AFTER_TOOL_CALL,
+                            {"user_id": user_id, "duration_ms": tool_duration_ms},
+                        )
+                        tool_turns.append(
+                            (event.assistant_blocks, event.tool_result_blocks)
+                        )
+                        current_display = []
+                        last_edit_len = 0
+
+                break  # stream completed successfully
+
+            except Exception as exc:
+                if _attempt == 0 and _is_transient_stream_exc(exc):
+                    logger.warning(
+                        "Transient stream error for user %d (attempt 1), retrying: %s",
+                        user_id, exc,
+                    )
+                    await asyncio.sleep(1.0)
+                    continue
                 if not rotator_stopped:
                     await rotator.stop()
-                    rotator_stopped = True
-                if session_manager.is_cancelled(user_id):
-                    shown = "".join(current_display)
-                    try:
-                        await sent.edit_text(
-                            (shown + "\n\n_[cancelled]_").strip(),
-                            parse_mode="Markdown",
-                        )
-                    except Exception as e:
-                        logger.debug("Failed to edit cancelled message: %s", e)
-                    return
-
-                if isinstance(event, TextChunk):
-                    if in_tool_turn:
-                        logger.debug(
-                            "Suppressing in-tool TextChunk (%d chars) for user %d",
-                            len(event.text), user_id,
-                        )
-                    else:
-                        current_display.append(event.text)
-                        if len("".join(current_display)) - last_edit_len >= 200:
-                            await _flush_display()
-
-                elif isinstance(event, ToolStatusChunk):
-                    in_tool_turn = True
-                    tool_exec_start = time.monotonic()
-                    await hook_manager.emit(
-                        HookEvents.BEFORE_TOOL_CALL,
-                        {"user_id": user_id, "tool_name": event.tool_name},
-                    )
-                    try:
-                        await sent.edit_text(
-                            f"_⚙️ Using {event.tool_name}…_",
-                            parse_mode="Markdown",
-                        )
-                    except Exception as e:
-                        logger.debug("Failed to update tool status message: %s", e)
-
-                elif isinstance(event, ToolResultChunk):
+                logger.error("stream_with_tools error for user %d: %s", user_id, exc)
+                try:
+                    await sent.edit_text(f"Sorry, something went wrong: {exc}")
+                except Exception:
                     pass
-
-                elif isinstance(event, ToolTurnComplete):
-                    in_tool_turn = False
-                    tool_duration_ms = 0
-                    if tool_exec_start is not None:
-                        tool_duration_ms = int((time.monotonic() - tool_exec_start) * 1000)
-                        tool_exec_total_ms += tool_duration_ms
-                        tool_exec_start = None
-                    await hook_manager.emit(
-                        HookEvents.AFTER_TOOL_CALL,
-                        {"user_id": user_id, "duration_ms": tool_duration_ms},
-                    )
-                    tool_turns.append(
-                        (event.assistant_blocks, event.tool_result_blocks)
-                    )
-                    current_display = []
-                    last_edit_len = 0
-
-        except Exception as exc:
-            if not rotator_stopped:
-                await rotator.stop()
-            logger.error("stream_with_tools error for user %d: %s", user_id, exc)
-            await sent.edit_text(f"Sorry, something went wrong: {exc}")
-            return
+                return
 
         await hook_manager.emit(
             HookEvents.LLM_OUTPUT,
@@ -678,6 +707,14 @@ def make_chat_handlers(
     async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if await reject_unauthorized(update):
             return
+
+        # Ignore messages generated by the bot itself to prevent re-ingestion loops (Bug 18)
+        try:
+            if update.effective_user and context.bot and update.effective_user.id == context.bot.id:
+                logger.debug("Ignoring message from bot itself (chat handler): %s", update)
+                return
+        except AttributeError:
+            logger.warning("Bug 18 guard: unexpected context shape, proceeding", exc_info=True)
 
         user = update.effective_user
         user_id = user.id

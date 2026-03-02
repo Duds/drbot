@@ -4,9 +4,15 @@ Base class for briefing generators.
 Provides common utilities and dependency injection pattern for all briefing types.
 """
 
+import logging
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from ...config import settings
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from ...memory.goals import GoalStore
@@ -81,4 +87,10 @@ class BriefingGenerator(ABC):
 
     def _format_date_header(self) -> str:
         """Return formatted date string for briefing headers."""
-        return datetime.now(timezone.utc).strftime("%A, %d %B")
+        tz_name = getattr(settings, "scheduler_timezone", "UTC")
+        try:
+            tz = ZoneInfo(tz_name)
+        except (KeyError, ZoneInfoNotFoundError):
+            logger.warning("_format_date_header: unknown timezone %r, falling back to UTC", tz_name)
+            tz = timezone.utc
+        return datetime.now(tz).strftime("%A, %d %B")

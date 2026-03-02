@@ -8,6 +8,11 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# primp (used internally by ddgs) emits a spurious WARNING on every request when
+# the impersonation target it was compiled with isn't available in the installed
+# version. The random fallback works fine — suppress the noise. (Bug 16)
+logging.getLogger("primp.impersonate").setLevel(logging.ERROR)
+
 
 async def web_search(query: str, max_results: int = 5) -> list[dict]:
     """

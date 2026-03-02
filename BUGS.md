@@ -108,6 +108,20 @@ _Last updated: see file history_
 
 ---
 
+## Bug 9: SQLite database corruption (knowledge table)
+
+- **Symptom:** `database disk image is malformed (11)` errors; `PRAGMA integrity_check` shows btreeInitPage errors
+- **Impact:** Knowledge table data (facts, goals) appeared corrupted — content columns showing NULL. Memory system non-functional.
+- **Root cause:** Stale WAL pages left over from a previous crash. WAL mode without a startup checkpoint allows corrupt/incomplete journal frames to persist across restarts.
+- **Priority:** Critical
+- **Status:** ✅ Fixed (recovered + preventive measure added)
+- **Fix:**
+  - Database self-recovered (WAL auto-recovery on reconnect). `PRAGMA integrity_check` now returns `ok`; 37 facts + 6 goals are accessible.
+  - Preventive fix added: `DatabaseManager.init()` in `remy/memory/database.py` now runs `PRAGMA wal_checkpoint(RESTART)` after DDL on every startup. This flushes any stale WAL frames to the main database file before serving requests. Non-fatal — wrapped in try/except so a checkpoint failure does not block startup.
+- **Reported:** 2026-03-01
+
+---
+
 ## Bug 10: Responses end mid-sentence with trailing "…"
 
 - **Symptom:** Remy's response appears cut off mid-sentence, ending with "…" (or " …")
@@ -122,20 +136,6 @@ _Last updated: see file history_
 - **Fix:**
   - `streaming.py`: `finalize()` retries `_flush()` once (0.5s delay) if `_last_sent` still ends with " …" after the first attempt
   - `chat.py`: retry `_flush_display(final=True)` once after 0.3s when there is text to show; if `current_display` is empty after tool turns, replace tool status message with "✓"
-- **Reported:** 2026-03-01
-
----
-
-## Bug 9: SQLite database corruption (knowledge table)
-
-- **Symptom:** `database disk image is malformed (11)` errors; `PRAGMA integrity_check` shows btreeInitPage errors
-- **Impact:** Knowledge table data (facts, goals) appeared corrupted — content columns showing NULL. Memory system non-functional.
-- **Root cause:** Stale WAL pages left over from a previous crash. WAL mode without a startup checkpoint allows corrupt/incomplete journal frames to persist across restarts.
-- **Priority:** Critical
-- **Status:** ✅ Fixed (recovered + preventive measure added)
-- **Fix:**
-  - Database self-recovered (WAL auto-recovery on reconnect). `PRAGMA integrity_check` now returns `ok`; 37 facts + 6 goals are accessible.
-  - Preventive fix added: `DatabaseManager.init()` in `remy/memory/database.py` now runs `PRAGMA wal_checkpoint(RESTART)` after DDL on every startup. This flushes any stale WAL frames to the main database file before serving requests. Non-fatal — wrapped in try/except so a checkpoint failure does not block startup.
 - **Reported:** 2026-03-01
 
 ---
@@ -178,10 +178,10 @@ _Last updated: see file history_
 ## Bug 14: Streaming reply overflow split safety
 
 - **Symptom:** Very long messages (>4000 chars, no space before limit) fall back to splitting at exactly 4000 chars. The `" …"` suffix can push the display string to 4003 chars, still within Telegram's 4096 limit but worth monitoring.
-- **Fix:** Add a `len(display) <= 4096` assertion in debug mode.
-- **Location:** `bot/streaming.py:84`
+- **Fix:** `StreamingReply._flush()` now includes a `if __debug__: assert len(display) <= 4096` guard. If the assertion fires, the overflow is logged at DEBUG and `display` is trimmed to `_TELEGRAM_MAX_LEN` before the edit — so the hard limit can never be breached.
+- **Location:** `remy/bot/streaming.py` — `_flush()`, lines 108–114
 - **Priority:** Low
-- **Status:** Open
+- **Status:** ✅ Fixed
 
 ---
 
@@ -200,10 +200,13 @@ _Last updated: see file history_
 ## Bug 16: primp impersonation header warning
 
 - **Symptom:** `[WARNING] primp.impersonate: Impersonate 'chrome_114' does not exist, using 'random'` — logged repeatedly during web requests.
-- **Cause:** `chrome_114` is not a valid impersonation target in the current version of `primp`.
-- **Fix:** Update the impersonation string to a valid value (e.g. `chrome_120`) or remove the explicit impersonation and rely on the `random` fallback intentionally.
+- **Cause:** `chrome_114` is not a valid impersonation target in the installed version of `primp`. The `random` fallback works correctly — the message is pure noise.
+- **Fix:**
+  - `requirements.txt`: bumped `ddgs>=9.0` → `ddgs>=9.2` (the upstream fix for the stale impersonation string).
+  - `remy/web/search.py`: added `logging.getLogger("primp.impersonate").setLevel(logging.ERROR)` at module level as a belt-and-suspenders suppressor — the warning is silenced regardless of which `ddgs`/`primp` version is installed.
+- **Locations:** `requirements.txt:15`, `remy/web/search.py`
 - **Priority:** Low
-- **Status:** Open
+- **Status:** ✅ Fixed
 
 ---
 
@@ -223,14 +226,14 @@ _Last updated: see file history_
 
 - **Symptom:** Remy's own responses are fed back into the message handler as new user messages. Each response triggers another response, which is again re-ingested, creating an exponentially deepening loop. User sees Remy apparently "repeating the question" and then asking why the question is being repeated, recursively.
 - **Impact:** Bot becomes completely unusable until restarted. Loop continues indefinitely.
-- **Root cause:** Telegram `RemoteProtocolError` disconnects (see Bug 6) cause the bot to retry message delivery. During retry, the message origin check is not filtering outbound messages sent by the bot itself — likely because the bot's own `user_id` is not being checked against `message.from_user.id` before dispatching to the message handler.
+- **Root cause:** Telegram `RemoteProtocolError` disconnects (see Bug 6) cause the bot to retry message delivery. During retry, the message origin check is not filtering outbound messages sent by the bot itself — the bot's own `user_id` was not being checked against `message.from_user.id` before dispatching to the message handler.
 - **Evidence:**
   - Two `RemoteProtocolError` warnings logged this session
   - Input validator flagged one of Remy's own outbound messages as a shell injection attempt — confirms outbound messages are passing through the inbound validation pipeline
-- **Likely location:** `remy/bot/telegram_bot.py` or `remy/bot/handlers.py` — message dispatch / update handler
-- **Fix:** Before dispatching any incoming `Message` update to the handler, check `message.from_user.id == context.bot.id` and discard if true. Bot messages should never be treated as user input.
+- **Fix:** Added `update.effective_user.id == context.bot.id` guard (with `except AttributeError` + warning log) to all four inbound message handlers: `handle_message`, `handle_voice`, `handle_photo`, `handle_document` in both `remy/bot/handlers.py` and `remy/bot/handlers/chat.py`.
+- **Locations:** `remy/bot/handlers.py:3008`, `remy/bot/handlers/chat.py:handle_message`
 - **Priority:** Critical
-- **Status:** 🔴 Open
+- **Status:** ✅ Fixed
 - **Reported:** 2026-03-02
 
 ---
@@ -241,51 +244,75 @@ _Last updated: see file history_
 - **Evidence:** `apscheduler` warning logged: `Run time of job "ProactiveScheduler._morning_briefing" was missed by [N]` — when the catch-up fires, the date string had already been computed at schedule time (the previous day).
 - **Root cause:** The date/day string passed into the briefing message is computed eagerly when the job is *registered* or *built*, not lazily at the moment the message is *sent*. When APScheduler catches up a missed job, the pre-baked date is stale.
 - **Related:** Bug 7 (missed jobs / coalesce). Bug 7's fix prevents multiple catch-up fires, but doesn't fix the stale date on the single catch-up fire that does run.
-- **Fix:** Compute the current date inside `_morning_briefing()` (and any other proactive message that includes a date) at the moment of execution — not at registration time. Use `datetime.now(tz)` inside the function body, not outside it.
+- **Fix:** `_format_date_header()` in `BriefingGenerator` now calls `datetime.now(tz)` at execution time rather than returning a pre-baked string. `morning.py:generate()` calls `self._format_date_header()` inside the job body, so the date is always computed at the moment the message is sent. Added `import logging` / `logger`, corrected PEP 8 import order, narrowed `except Exception` → `except (KeyError, ZoneInfoNotFoundError)` with a warning log.
+- **Location:** `remy/scheduler/briefings/base.py` — `_format_date_header()`
 - **Priority:** Medium
-- **Status:** 🔴 Open
+- **Status:** ✅ Fixed
 - **Reported:** 2026-03-02
 
 ---
 
-## Bug 12: Reaction handler silently drops reply — orphaned `tool_use_id`
+## Bug 20: Reaction handler silently drops reply — orphaned `tool_use_id`
 
 - **Symptom:** Remy executes a tool (e.g. `manage_memory`) and stores the result successfully, but no reply is sent to the user. The conversation appears to go silent.
 - **Impact:** User receives no confirmation or response after tool use. High confusion — task appears to have failed when it succeeded.
 - **Root cause:** The reaction handler calls Claude with a message that contains a `tool_result` block whose `tool_use_id` has no corresponding `tool_use` block in the preceding message. Claude returns `400 invalid_request_error: unexpected tool_use_id found in tool_result blocks`. The exception is caught but the reply is never delivered.
 - **Error:** `messages.0.content.0: unexpected tool_use_id found in tool_result blocks: toolu_01JWHGfpNBhZDx4w8. Each tool_result block must have a corresponding tool_use block in the previous message.`
-- **Location:** `remy/bot/handlers/reactions.py` — reaction handler Claude call
+- **Fix:** Added module-level `_sanitize_messages_for_claude()` which strips `tool_use` and `tool_result` blocks entirely from history before passing to `claude_client.complete()`. Messages that collapse to empty content are dropped (API rejects empty string content). No-op early-exit (Bug 22) also reduces surface area by skipping Claude calls for acknowledgement reactions. Retry with minimal context removed — sanitisation prevents the error at source.
+- **Location:** `remy/bot/handlers/reactions.py` — `_sanitize_messages_for_claude()`
 - **Priority:** High
-- **Status:** Open
+- **Status:** ✅ Fixed
 - **Reported:** 2026-03-02
 
 ---
 
-## Bug 13: Incomplete chunked read from Claude API causes dropped response
+## Bug 21: Incomplete chunked read from Claude API causes dropped response
 
 - **Symptom:** Response takes an unusually long time, then either arrives late or is missing entirely. Logged as `stream_with_tools error`.
 - **Impact:** User experiences slow or silent Remy. Compounds with Telegram disconnections (see Bug 6) to create multi-second dead periods.
-- **Root cause:** Claude API closes the streaming connection before the full response body is sent — `peer closed connection without sending complete message body (incomplete chunked read)`. No retry logic exists for mid-stream connection drops.
+- **Root cause:** Claude API closes the streaming connection before the full response body is sent — `peer closed connection without sending complete message body (incomplete chunked read)`. No retry logic existed for mid-stream connection drops.
 - **Error:** `remy.bot.handlers.chat: stream_with_tools error for user 8138498165: peer closed connection without sending complete message body (incomplete chunked read)`
-- **Location:** `remy/bot/handlers/chat.py` — `stream_with_tools` error handler
+- **Fix:** Added `_is_transient_stream_exc()` helper and wrapped the `async for event in claude_client.stream_with_tools(...)` loop in a `for _attempt in range(2):` retry. On a transient error during attempt 0, the streaming state (`usage`, `current_display`, `tool_turns`, timers) is reset and the stream is retried after 1s. Non-transient errors or second-attempt failures still surface the user-facing error message.
+- **Location:** `remy/bot/handlers/chat.py` — `_stream_with_tools_path()`
 - **Priority:** Medium
-- **Status:** Open
+- **Status:** ✅ Fixed
 - **Reported:** 2026-03-02
 
 ---
 
-## Bug 12 — Amendment (2026-03-02)
-
-**Additional requirement for fix:** The reaction handler must also handle the case where no reaction is needed. Currently the handler always attempts to call Claude to decide on a reaction, which means every message triggers a Claude call and risks the orphaned `tool_use_id` error. The fix should include a no-op / early-exit path so that when Claude determines no reaction is warranted, the handler exits cleanly without making a tool call at all. This avoids unnecessary API calls and eliminates the surface area for the malformed message bug.
-
----
-
-## Bug 14: Reaction handler always attempts a reaction — no no-op path
+## Bug 22: Reaction handler always attempts a reaction — no no-op path
 
 - **Symptom:** Every user message triggers a Claude call in the reaction handler, even for messages that warrant no reaction (e.g. simple thumbs-up acknowledgements from the user, confirmations, or reactions to reactions).
-- **Impact:** Unnecessary API calls on every message; compounds Bug 12 by increasing the frequency of the malformed `tool_use_id` error.
-- **Root cause:** The reaction handler has no early-exit or no-op path. Claude is always called and always expected to emit a `react_to_message` tool call. There is no supported return path for "no reaction needed."
+- **Impact:** Unnecessary API calls on every message; compounds Bug 20 by increasing the frequency of the malformed `tool_use_id` error.
+- **Root cause:** The reaction handler had no early-exit or no-op path — Claude was always called.
+- **Fix:** Added `_NO_OP_EMOJI = {"✅", "👍", "👀", "🙏"}` set. Early-exit check fires before `conv_store.get_recent_turns()` (avoiding the DB read entirely). No-op reactions persist only the synthetic user turn and return without calling Claude.
 - **Location:** `remy/bot/handlers/reactions.py`
 - **Priority:** Medium
-- **Status:** Open
+- **Status:** ✅ Fixed
 - **Reported:** 2026-03-02
+
+---
+
+## Bug 23: Tool dispatch exception corrupts conversation history
+
+- **Symptom:** When a tool raises an exception mid-stream (network timeout, validation error, etc.), the user sees a generic `"❌ Sorry, something went wrong"` message with no indication of which tool failed. The conversation turn is silently dropped.
+- **Impact:** No user-friendly recovery — Claude cannot acknowledge the failure or suggest retrying, because the agentic loop is aborted. Conversation history is consistent (the turn is not stored) but the user is left without context.
+- **Root cause:** `stream_with_tools()` in `remy/ai/claude_client.py` called `tool_registry.dispatch()` with no per-tool exception handling. Any tool raising would exit the generator before `ToolTurnComplete` was yielded, so `assistant_content_blocks` were accumulated but never paired with `tool_result_blocks`. The outer handler in `handlers.py` caught the exception at the session level.
+- **Fix:** Wrapped `tool_registry.dispatch()` in a per-tool `try/except` inside the tool execution loop. On failure, a synthetic error `tool_result` block is injected (`"Tool 'x' encountered an error: …"`), the loop continues, and `ToolTurnComplete` is still yielded. Claude receives the error result and can respond conversationally (e.g. "I couldn't fetch your emails — want me to try again?"). Exception logged at ERROR level with tool name and traceback.
+- **Location:** `remy/ai/claude_client.py` — tool execution loop
+- **Priority:** High
+- **Status:** ✅ Fixed
+- **Fixed:** 2026-02-27
+
+---
+
+## Bug 24: Final reply duplicated or reordered after multi-tool interactions
+
+- **Symptom:** After a multi-step agentic exchange involving sequential tool calls, Claude's final prose response appeared twice in Telegram, or partial text appeared before tool results had fully flushed — causing confirmations to appear out of order.
+- **Impact:** Confusing UX; looked like Remy was repeating itself or giving mangled output.
+- **Root cause:** `StreamingReply.feed()` was being called with `TextChunk` content that arrived just before the final `ToolTurnComplete` event. That pre-final text was streamed immediately to Telegram. When Claude then emitted the true final reply as another `TextChunk` sequence, the earlier partial was already shown — producing a duplicate or reordered message.
+- **Fix:** Gated `StreamingReply.feed()` calls behind the `in_tool_turn` flag (from Bug 12 / suppress-inter-tool-text story). Pre-final `TextChunk` events received while `in_tool_turn` is `True` are logged at DEBUG but not streamed. `current_display` is cleared on `ToolTurnComplete`, so the stream starts clean for the true final reply.
+- **Location:** `remy/bot/handlers.py` and `remy/bot/handlers/chat.py` — `async for event in stream_with_tools(...)` loop
+- **Priority:** Medium
+- **Status:** ✅ Fixed
+- **Fixed:** 2026-02-27

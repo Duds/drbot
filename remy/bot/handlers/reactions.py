@@ -52,6 +52,44 @@ _REACTION_MAP: dict[str, str] = {
     "🫡": "respect, acknowledged",
 }
 
+# Emojis that generally don't require a textual reply — treat as no-op
+_NO_OP_EMOJI = {"✅", "👍", "👀", "🙏"}
+
+
+def _sanitize_messages_for_claude(msgs: list[dict]) -> list[dict]:
+    """Strip tool_use/tool_result blocks from message history before sending to Claude.
+
+    Reaction handler calls use a simple `complete()` path that doesn't support tool
+    blocks. If history contains tool turns, the API rejects them with
+    'unexpected tool_use_id'. This function collapses list-content messages down to
+    plain text, discarding any block that carries a tool_use_id reference (Bug 12).
+    """
+    safe = []
+    for m in msgs:
+        content = m.get("content")
+        if isinstance(content, list):
+            parts: list[str] = []
+            for b in content:
+                if not isinstance(b, dict):
+                    parts.append(str(b))
+                    continue
+                btype = b.get("type")
+                if btype == "text":
+                    parts.append(b.get("text") or b.get("content") or "")
+                elif btype in ("tool_result", "tool_use"):
+                    # Drop the block — don't carry over tool_use_id references
+                    pass
+                else:
+                    parts.append(str(b.get("content") or b.get("text") or ""))
+            joined = "\n".join(p for p in parts if p)
+            if not joined:
+                # Skip messages that collapse to nothing — API rejects empty content
+                continue
+            safe.append({"role": m.get("role"), "content": joined})
+        else:
+            safe.append(m)
+    return safe
+
 
 def _emoji_from_reaction(reaction) -> str | None:
     """Extract the emoji string from a ReactionType object, or return None."""
@@ -124,6 +162,18 @@ def make_reaction_handler(
         thread_id: int | None = None
         session_key = SessionManager.get_session_key(user_id, thread_id)
 
+        # Early-exit for obvious no-op reactions — skip DB read and Claude call entirely (Bug 14)
+        if emoji in _NO_OP_EMOJI:
+            logger.debug("Reaction %s from user %d considered no-op, skipping Claude call", emoji, user.id)
+            try:
+                await conv_store.append_turn(
+                    user_id, session_key,
+                    ConversationTurn(role="user", content=synthetic_text),
+                )
+            except Exception as exc:
+                logger.warning("Reaction handler: failed to persist no-op turn: %s", exc)
+            return
+
         # Load recent conversation history for context
         try:
             from .base import _build_message_from_turn, _trim_messages_to_budget
@@ -151,15 +201,31 @@ def make_reaction_handler(
                 logger.warning("Reaction handler: memory injection failed: %s", exc)
 
         # Get a short reply from Claude — no streaming needed for a reaction response
+        safe_messages = _sanitize_messages_for_claude(messages)
+
         try:
             reply = await claude_client.complete(
-                messages=messages,
+                messages=safe_messages,
                 system=system_prompt,
                 max_tokens=120,
             )
         except Exception as exc:
+            # If Claude complains about unexpected tool_use_id, retry with minimal context
+            err_text = str(exc).lower()
             logger.error("Reaction handler: Claude call failed: %s", exc)
-            return
+            if "unexpected tool_use_id" in err_text or "tool_use_id" in err_text:
+                try:
+                    logger.debug("Reaction handler: retrying Claude call with minimal context")
+                    reply = await claude_client.complete(
+                        messages=[{"role": "user", "content": synthetic_text}],
+                        system=system_prompt,
+                        max_tokens=120,
+                    )
+                except Exception as exc2:
+                    logger.error("Reaction handler: retry failed: %s", exc2)
+                    return
+            else:
+                return
 
         if not reply or not reply.strip():
             return

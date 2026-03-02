@@ -404,8 +404,6 @@ These were in my-agent and caused bloat. **Do not implement.**
 | **M**    | Analytics, goal dashboard, retrospective                           | —                                   | ✅ Done                      |
 | **M**    | Image/vision support (photos)                                      | —                                   | ✅ Done                      |
 | **M**    | BackgroundTaskRunner (fire-and-forget)                             | US-background-task-runner           | ✅ Done                      |
-| **S**    | Fix tool dispatch exception → corrupts history (bug)               | US-tool-dispatch-exception-recovery | ✅ Done                      |
-| **S**    | Fix final reply duplication (bug)                                  | US-final-reply-duplication          | ✅ Done                      |
 | **S**    | Persistent job tracking + `/jobs`                                  | US-persistent-job-tracking          | ✅ Done                      |
 | **S**    | Gmail label/folder search                                          | US-gmail-label-search               | ✅ Done                      |
 | **S**    | Analytics: per-call token capture                                  | US-analytics-token-capture          | ✅ Done                      |
@@ -427,9 +425,6 @@ These were in my-agent and caused bloat. **Do not implement.**
 | **S**    | Cloudflare Tunnel — remote log/telemetry access                    | US-cloudflare-tunnel-remote-observability | 🔄 In Progress (setup on Mac Mini pending) |
 | **S**    | Claude Agent SDK subagents                                         | US-claude-agent-sdk-subagents       | ⬜ Deferred (major refactor) |
 | **S**    | Gmail send                                                         | —                                   | ⬜ Deferred (security)       |
-| **C**    | Fix one-time automation double-fire on restart (bug)               | US-automation-double-fire           | ✅ Done                      |
-| **C**    | Streaming reply overflow split safety (bug)                        | US-streaming-overflow-safety        | ⬜ P3 (low priority)         |
-| **C**    | Fix primp impersonation header warning (bug)                       | US-primp-impersonation-warning      | ⬜ P3 (low priority)         |
 | **W**    | Headless browser automation                                        | —                                   | ❌ Avoid                     |
 | **W**    | Knowledge graph + vector store                                     | —                                   | ❌ Avoid                     |
 
@@ -501,12 +496,6 @@ These were in my-agent and caused bloat. **Do not implement.**
 
 14. **Google Wallet alerts** (`US-google-wallet-monitoring`)
     - Tasker profile → `/webhook/notification`; depends on SMS infrastructure
-
-15. **Streaming reply overflow safety** (`US-streaming-overflow-safety`)
-    - Add debug assertion `len(part) <= 4096` in the overflow split path of `StreamingReply._flush()`
-
-16. **primp impersonation warning** (`US-primp-impersonation-warning`)
-    - Suppress or eliminate `[WARNING] primp.impersonate: Impersonate 'chrome_114' does not exist` log noise from `ddgs` web searches
 
 ### Deferred (explicit non-starters for now)
 

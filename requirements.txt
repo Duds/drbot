@@ -12,7 +12,7 @@ sentence-transformers>=3.0
 faster-whisper>=1.0
 sqlite-vec>=0.1
 # Web search — Phase 4 (no API key required; formerly duckduckgo-search)
-ddgs>=9.0
+ddgs>=9.2  # >=9.2 fixes primp chrome_114 impersonation warning (Bug 16)
 # Google Workspace integration (Phase 3)
 google-api-python-client>=2.100
 google-auth-oauthlib>=1.1
