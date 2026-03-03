@@ -55,6 +55,12 @@ Tools available:
     search_files          → semantic search file contents (RAG)
     index_status          → file index status
 
+  Git (read-only)
+    git_log               → list recent commits (ref, limit, path)
+    git_show_commit       → show one commit (message, author, files changed)
+    git_diff              → unified diff for a commit or between refs
+    git_status            → current branch and short status
+
   Documents
     read_gdoc             → read a Google Doc by URL or ID
     append_to_gdoc        → append text to a Google Doc
@@ -681,6 +687,207 @@ TOOL_SCHEMAS: list[dict] = [
                 },
             },
             "required": ["path", "content"],
+        },
+    },
+    # ------------------------------------------------------------------ #
+    # Git (read-only; US-git-commits-and-diffs)                           #
+    # ------------------------------------------------------------------ #
+    {
+        "name": "git_log",
+        "description": (
+            "List recent git commits. Use when the user asks what changed recently, "
+            "who committed something, or for commit history. Read-only."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ref": {
+                    "type": "string",
+                    "description": (
+                        "Branch, tag, or commit to start from (default HEAD). "
+                        "E.g. main, HEAD, v1.0."
+                    ),
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max number of commits to return (default 10, max 50).",
+                },
+                "path": {
+                    "type": "string",
+                    "description": "Limit to commits that touched this path (file or dir).",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "git_show_commit",
+        "description": (
+            "Show one commit: full message, author, date, and list of changed files. "
+            "Use when the user asks for details of a specific commit. Read-only."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ref": {
+                    "type": "string",
+                    "description": "Commit hash (short or full) or branch name (e.g. HEAD, abc1234).",
+                },
+            },
+            "required": ["ref"],
+        },
+    },
+    {
+        "name": "git_diff",
+        "description": (
+            "Show a unified diff. Either for a single commit (vs its parent) or between "
+            "two refs (e.g. main and current branch). Use when the user asks what changed "
+            "or for a diff. Read-only. Output may be truncated if very large."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "commit": {
+                    "type": "string",
+                    "description": "Show diff for this commit (vs its parent). Omit if using base/head.",
+                },
+                "base": {
+                    "type": "string",
+                    "description": "Base ref for comparison (e.g. main). Use with head.",
+                },
+                "head": {
+                    "type": "string",
+                    "description": "Head ref for comparison (e.g. HEAD or branch name). Use with base.",
+                },
+                "path": {
+                    "type": "string",
+                    "description": "Limit diff to this file or directory.",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "git_status",
+        "description": (
+            "Show current branch and short status (modified/untracked files, ahead/behind). "
+            "Use when the user asks what branch they are on or what has changed. Read-only."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
+    # ------------------------------------------------------------------ #
+    # Relay (Claude Desktop ↔ cowork)                                     #
+    # ------------------------------------------------------------------ #
+    {
+        "name": "relay_get_messages",
+        "description": (
+            "Check Remy's relay inbox for messages from cowork (Claude Desktop). "
+            "Call at the start of any cowork session or when Dale asks what's in the relay."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "unread_only": {
+                    "type": "boolean",
+                    "description": "If true, return only unread messages (default true).",
+                },
+                "mark_read": {
+                    "type": "boolean",
+                    "description": "If true, mark returned messages as read (default true).",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max messages to return (default 20, max 100).",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "relay_post_message",
+        "description": "Send a message from Remy to cowork (Claude Desktop) via the relay channel.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string",
+                    "description": "The message content to send to cowork.",
+                },
+                "thread_id": {
+                    "type": "string",
+                    "description": "Optional thread ID to reply in-thread.",
+                },
+            },
+            "required": ["content"],
+        },
+    },
+    {
+        "name": "relay_get_tasks",
+        "description": "List tasks assigned to Remy from cowork. Use to find pending work.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "type": "string",
+                    "enum": [
+                        "pending",
+                        "in_progress",
+                        "done",
+                        "needs_clarification",
+                        "all",
+                    ],
+                    "description": "Filter tasks by status (default: pending).",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max tasks to return (default 20, max 100).",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "relay_update_task",
+        "description": "Claim, complete, or flag a relay task from cowork.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "The task ID to update."},
+                "status": {
+                    "type": "string",
+                    "enum": ["in_progress", "done", "needs_clarification"],
+                    "description": "New task status.",
+                },
+                "result": {
+                    "type": "string",
+                    "description": "Result summary (for done).",
+                },
+                "notes": {
+                    "type": "string",
+                    "description": "Clarification notes (for needs_clarification).",
+                },
+            },
+            "required": ["task_id", "status"],
+        },
+    },
+    {
+        "name": "relay_post_note",
+        "description": "Post a shared observation or finding to the relay for cowork to read.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "content": {"type": "string", "description": "Note content."},
+                "tags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional tags (e.g. ['gmail', 'audit']).",
+                },
+            },
+            "required": ["content"],
         },
     },
     # ------------------------------------------------------------------ #

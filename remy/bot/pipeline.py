@@ -17,9 +17,9 @@ from typing import TYPE_CHECKING
 from .handlers import (
     _TOOL_TURN_PREFIX,
     _build_message_from_turn,
-    _sanitize_messages_for_claude,
     _trim_messages_to_budget,
 )
+from .handlers.base import _sanitize_messages_for_claude
 from .session import SessionManager
 from .streaming import StreamingReply
 from ..ai.claude_client import (
@@ -275,12 +275,12 @@ async def run_proactive_trigger(
                             }
                         )
                 if actions:
-                    keyboard = make_suggested_actions_keyboard(actions, user_id)
-                    if keyboard:
+                    cal_keyboard = make_suggested_actions_keyboard(actions, user_id)
+                    if cal_keyboard is not None:
                         await bot.edit_message_reply_markup(
                             chat_id=chat_id,
                             message_id=sent.message_id,
-                            reply_markup=keyboard,
+                            reply_markup=cal_keyboard,
                         )
             except Exception as e:
                 logger.debug(

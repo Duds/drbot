@@ -88,32 +88,34 @@ class BriefingGenerator(ABC):
     def _format_date_header(self) -> str:
         """Return formatted date string for briefing headers."""
         tz_name = getattr(settings, "scheduler_timezone", "UTC")
+        tz: ZoneInfo | timezone = timezone.utc
         try:
             tz = ZoneInfo(tz_name)
         except (KeyError, ZoneInfoNotFoundError):
             logger.warning(
                 "_format_date_header: unknown timezone %r, falling back to UTC", tz_name
             )
-            tz = timezone.utc
         return datetime.now(tz).strftime("%A, %d %B")
 
     def _format_date_australian(self, d: datetime | None = None) -> str:
         """Return Australian-style date: DD/MM/YYYY or 'dd MMM' for display.
         Uses scheduler_timezone. If d is None, uses now."""
         tz_name = getattr(settings, "scheduler_timezone", "UTC")
+        tz: ZoneInfo | timezone = timezone.utc
         try:
             tz = ZoneInfo(tz_name)
         except (KeyError, ZoneInfoNotFoundError):
-            tz = timezone.utc
+            pass
         dt = (d or datetime.now(tz)).astimezone(tz)
         return dt.strftime("%d/%m/%Y")
 
     def _format_date_australian_short(self, d: datetime | None = None) -> str:
         """Return short Australian date: '03 Mar' style."""
         tz_name = getattr(settings, "scheduler_timezone", "UTC")
+        tz: ZoneInfo | timezone = timezone.utc
         try:
             tz = ZoneInfo(tz_name)
         except (KeyError, ZoneInfoNotFoundError):
-            tz = timezone.utc
+            pass
         dt = (d or datetime.now(tz)).astimezone(tz)
         return dt.strftime("%d %b")

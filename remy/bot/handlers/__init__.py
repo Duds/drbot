@@ -32,7 +32,6 @@ from typing import TYPE_CHECKING
 
 from .base import (
     _build_message_from_turn,
-    _sanitize_messages_for_claude,
     _trim_messages_to_budget,
     _TOOL_TURN_PREFIX,
     _rate_limiter,
@@ -67,7 +66,7 @@ if TYPE_CHECKING:
     from ...memory.background_jobs import BackgroundJobStore
     from ...memory.plans import PlanStore
     from ...memory.database import DatabaseManager
-    from ...agents.orchestrator import BoardOrchestrator
+    from ...agents.subagent_runner import SubagentRunner
     from ...scheduler.proactive import ProactiveScheduler
     from ...analytics.analyzer import ConversationAnalyzer
     from ...voice.transcriber import VoiceTranscriber
@@ -90,7 +89,7 @@ def make_handlers(
     memory_injector: "MemoryInjector | None" = None,
     voice_transcriber: "VoiceTranscriber | None" = None,
     proactive_scheduler: "ProactiveScheduler | None" = None,
-    board_orchestrator: "BoardOrchestrator | None" = None,
+    subagent_runner: "SubagentRunner | None" = None,
     db: "DatabaseManager | None" = None,
     tool_registry: "ToolRegistry | None" = None,
     google_calendar: "CalendarClient | None" = None,
@@ -197,7 +196,7 @@ def make_handlers(
     handlers.update(
         make_automation_handlers(
             claude_client=claude_client,
-            board_orchestrator=board_orchestrator,
+            subagent_runner=subagent_runner,
             memory_injector=memory_injector,
             automation_store=automation_store,
             job_store=job_store,

@@ -122,7 +122,12 @@ class OutboundQueue:
                 ),
             )
             await db.commit()
-            queue_id = cursor.lastrowid
+            queue_id_raw = cursor.lastrowid
+            if queue_id_raw is None:
+                raise RuntimeError(
+                    "INSERT into outbound_queue did not return lastrowid"
+                )
+            queue_id = queue_id_raw
             logger.debug("Enqueued message %d for chat %s", queue_id, chat_id)
             return queue_id
 
@@ -264,7 +269,9 @@ class OutboundQueue:
                         msg.message_type,
                         msg.id,
                     )
-                    await self.mark_failed(msg.id, f"Unsupported type: {msg.message_type}", retry=False)
+                    await self.mark_failed(
+                        msg.id, f"Unsupported type: {msg.message_type}", retry=False
+                    )
                     continue
 
                 await self.mark_sent(msg.id)
@@ -297,7 +304,10 @@ class OutboundQueue:
             reset_count = cursor.rowcount
 
             if reset_count > 0:
-                logger.info("Reset %d messages from 'sending' to 'pending' on startup", reset_count)
+                logger.info(
+                    "Reset %d messages from 'sending' to 'pending' on startup",
+                    reset_count,
+                )
 
             # Count pending messages
             cursor = await db.execute(

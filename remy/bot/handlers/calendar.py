@@ -26,12 +26,14 @@ def make_calendar_handlers(
 ):
     """
     Factory that returns Google Calendar handlers.
-    
+
     Returns a dict of command_name -> handler_function.
     """
 
     async def calendar_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """/calendar [days=7] — list upcoming calendar events."""
+        if update.message is None or update.effective_user is None:
+            return
         if await reject_unauthorized(update):
             return
         if google_calendar is None:
@@ -43,10 +45,13 @@ def make_calendar_handlers(
         except (ValueError, IndexError):
             days = 7
         await update.message.reply_text("📅 Fetching calendar…")
+        err: Exception | None = None
         try:
             events = await google_calendar.list_events(days=days)
-        except Exception as e:
-            await update.message.reply_text(f"❌ Calendar error: {e}")
+        except Exception as exc:
+            err = exc
+        if err is not None:
+            await update.message.reply_text(f"❌ Calendar error: {err}")
             return
         if not events:
             await update.message.reply_text(f"📅 No events in the next {days} day(s).")
@@ -66,13 +71,17 @@ def make_calendar_handlers(
             msg = msg[:4000] + "…"
         await update.message.reply_text(msg, parse_mode="Markdown")
 
-    async def calendar_today_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def calendar_today_command(
+        update: Update, context: ContextTypes.DEFAULT_TYPE
+    ):
         """/calendar-today — today's events at a glance."""
         context.args = ["1"]
         await calendar_command(update, context)
 
     async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """/schedule <title> <YYYY-MM-DD> <HH:MM> — create a calendar event (1-hour block)."""
+        if update.message is None or update.effective_user is None:
+            return
         if await reject_unauthorized(update):
             return
         if google_calendar is None:
@@ -99,10 +108,10 @@ def make_calendar_handlers(
                 f"📅 {date_str} at {time_str} (1 hour){link_suffix}",
                 parse_mode="Markdown",
             )
-        except ValueError as e:
-            await update.message.reply_text(f"❌ {e}")
-        except Exception as e:
-            await update.message.reply_text(f"❌ Could not create event: {e}")
+        except ValueError as exc:
+            await update.message.reply_text(f"❌ {exc}")
+        except Exception as exc:
+            await update.message.reply_text(f"❌ Could not create event: {exc}")
 
     return {
         "calendar": calendar_command,

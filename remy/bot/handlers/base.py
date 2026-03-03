@@ -15,7 +15,10 @@ from typing import TYPE_CHECKING
 
 from telegram import Update
 
+from ...ai.input_validator import RateLimiter
 from ...config import settings
+from ...constants import WORKING_MESSAGES, TOOL_TURN_PREFIX
+from ...utils.tokens import estimate_tokens
 
 # Tools that trigger an automatic completion reaction (🤩) on the user's message
 # when they complete successfully. Uses Telegram-valid emoji per Bug 39.
@@ -31,9 +34,6 @@ COMPLETION_REACTION_TOOLS = frozenset(
     }
 )
 COMPLETION_REACTION_EMOJI = "🤩"  # Telegram-valid; ✅ not supported
-from ...constants import WORKING_MESSAGES, TOOL_TURN_PREFIX
-from ...ai.input_validator import RateLimiter
-from ...utils.tokens import estimate_tokens
 
 if TYPE_CHECKING:
     from ...models import ConversationTurn
@@ -227,8 +227,16 @@ def is_allowed(user_id: int) -> bool:
     return user_id in settings.telegram_allowed_users
 
 
+def _require_message_and_user(update: Update) -> bool:
+    """Return True if update has message and effective_user (for handler guards)."""
+    return update.message is not None and update.effective_user is not None
+
+
 async def reject_unauthorized(update: Update) -> bool:
     """Reject unauthorized users with a message. Returns True if rejected."""
+    if not _require_message_and_user(update):
+        return True
+    assert update.message is not None and update.effective_user is not None
     if not is_allowed(update.effective_user.id):
         await update.message.reply_text("You are not authorised to use this bot.")
         return True

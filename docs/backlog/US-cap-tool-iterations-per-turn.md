@@ -55,6 +55,12 @@ Related: `remy/ai/claude_client.py`, `remy/bot/pipeline.py`, telemetry in `remy/
 
 ---
 
+## Related
+
+- **US-step-limit-buttons** — When the cap is hit, the truncation message now includes inline buttons [Continue] [Break down] [Stop] for one-tap next actions.
+
+---
+
 ## Out of Scope
 
 - Changing which tools are available.

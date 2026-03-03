@@ -76,8 +76,20 @@ class ToolTurnComplete:
     tool_result_blocks: list[dict]  # The user message content blocks (tool results)
 
 
+@dataclass
+class StepLimitReached:
+    """
+    Emitted after the step-limit TextChunk when max_iterations was hit.
+    Consumer should attach the step-limit inline keyboard (Continue / Break down / Stop).
+    """
+
+    pass
+
+
 # The StreamEvent union type
-StreamEvent = Union[TextChunk, ToolStatusChunk, ToolResultChunk, ToolTurnComplete]
+StreamEvent = Union[
+    TextChunk, ToolStatusChunk, ToolResultChunk, ToolTurnComplete, StepLimitReached
+]
 
 
 class AnthropicOverloadFallbackAvailable(Exception):
@@ -148,8 +160,8 @@ class ClaudeClient:
                 async with self._client.messages.stream(
                     model=model,
                     max_tokens=settings.anthropic_max_tokens,
-                    system=system_with_cache,
-                    messages=messages,
+                    system=system_with_cache,  # type: ignore[arg-type]
+                    messages=messages,  # type: ignore[arg-type]
                 ) as stream:
                     async for text in stream.text_stream:
                         yield text
@@ -260,9 +272,9 @@ class ClaudeClient:
                     async with self._client.messages.stream(
                         model=model,
                         max_tokens=settings.anthropic_max_tokens,
-                        system=system_with_cache,
-                        messages=working_messages,
-                        tools=tools_with_cache,
+                        system=system_with_cache,  # type: ignore[arg-type]
+                        messages=working_messages,  # type: ignore[arg-type]
+                        tools=tools_with_cache,  # type: ignore[arg-type]
                     ) as stream:
                         # Iterate raw events so we don't exhaust the generator before
                         # calling stream.get_final_message() below
@@ -524,6 +536,7 @@ class ClaudeClient:
         yield TextChunk(
             text="\n\n_I reached my step limit for this turn. Ask me to continue or break this into smaller tasks._"
         )
+        yield StepLimitReached()
 
     async def complete(
         self,
@@ -548,8 +561,8 @@ class ClaudeClient:
                 response = await self._client.messages.create(
                     model=model,
                     max_tokens=max_tokens,
-                    system=system_with_cache,
-                    messages=messages,
+                    system=system_with_cache,  # type: ignore[arg-type]
+                    messages=messages,  # type: ignore[arg-type]
                 )
 
                 if not hasattr(response, "content"):
@@ -568,7 +581,8 @@ class ClaudeClient:
                     usage_out.cache_read_tokens = (
                         getattr(response.usage, "cache_read_input_tokens", 0) or 0
                     )
-                return response.content[0].text
+                first = response.content[0]
+                return getattr(first, "text", "")
             except (anthropic.RateLimitError, anthropic.APIStatusError) as e:
                 if isinstance(e, anthropic.APIStatusError) and e.status_code < 500:
                     raise

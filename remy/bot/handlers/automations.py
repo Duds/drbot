@@ -6,7 +6,6 @@ Contains handlers for scheduled reminders, task breakdown, and the Board of Dire
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import TYPE_CHECKING
 
@@ -21,7 +20,7 @@ from ..session import SessionManager
 from ...utils.telegram_formatting import format_telegram_message
 
 if TYPE_CHECKING:
-    from ...agents.orchestrator import BoardOrchestrator
+    from ...agents.subagent_runner import SubagentRunner
     from ...memory.automations import AutomationStore
     from ...memory.background_jobs import BackgroundJobStore
     from ...memory.injector import MemoryInjector
@@ -33,7 +32,7 @@ logger = logging.getLogger(__name__)
 def make_automation_handlers(
     *,
     claude_client=None,
-    board_orchestrator: "BoardOrchestrator | None" = None,
+    subagent_runner: "SubagentRunner | None" = None,
     memory_injector: "MemoryInjector | None" = None,
     automation_store: "AutomationStore | None" = None,
     job_store: "BackgroundJobStore | None" = None,
@@ -87,6 +86,8 @@ def make_automation_handlers(
         /schedule-daily [HH:MM] <task>
         Create a daily reminder. HH:MM is optional (defaults to 09:00).
         """
+        if update.message is None or update.effective_user is None:
+            return
         if await reject_unauthorized(update):
             return
 
@@ -108,8 +109,8 @@ def make_automation_handlers(
         user_id = update.effective_user.id
         try:
             automation_id = await automation_store.add(user_id, label, cron)
-        except Exception as e:
-            await update.message.reply_text(f"❌ Failed to save automation: {e}")
+        except Exception as exc:
+            await update.message.reply_text(f"❌ Failed to save automation: {exc}")
             return
 
         _sched.add_automation(automation_id, user_id, label, cron)
@@ -128,6 +129,8 @@ def make_automation_handlers(
         /schedule-weekly [day] [HH:MM] <task>
         Create a weekly reminder. Day defaults to Monday, time to 09:00.
         """
+        if update.message is None or update.effective_user is None:
+            return
         if await reject_unauthorized(update):
             return
 
@@ -149,8 +152,8 @@ def make_automation_handlers(
         user_id = update.effective_user.id
         try:
             automation_id = await automation_store.add(user_id, label, cron)
-        except Exception as e:
-            await update.message.reply_text(f"❌ Failed to save automation: {e}")
+        except Exception as exc:
+            await update.message.reply_text(f"❌ Failed to save automation: {exc}")
             return
 
         _sched.add_automation(automation_id, user_id, label, cron)
@@ -177,6 +180,8 @@ def make_automation_handlers(
         update: Update, context: ContextTypes.DEFAULT_TYPE
     ):
         """/list-automations — show scheduled reminders with inline [Run] buttons (US-one-tap-automations)."""
+        if update.message is None or update.effective_user is None:
+            return
         if await reject_unauthorized(update):
             return
 
@@ -239,6 +244,8 @@ def make_automation_handlers(
 
     async def unschedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """/unschedule <id> — remove a scheduled reminder by its ID."""
+        if update.message is None or update.effective_user is None:
+            return
         if await reject_unauthorized(update):
             return
 
@@ -269,6 +276,8 @@ def make_automation_handlers(
 
     async def breakdown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """/breakdown <task> — break a task into 5 clear, actionable steps."""
+        if update.message is None or update.effective_user is None:
+            return
         if await reject_unauthorized(update):
             return
 
@@ -328,13 +337,20 @@ def make_automation_handlers(
         )
 
     async def board_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """/board <topic> — convene the Board of Directors on a topic."""
+        """/board <topic> — convene the Board of Directors on a topic.
+
+        Validates input, creates job, shows working state, invokes the subagent
+        runner, and returns. The runner delivers the result when the subagent
+        completes (see US-subagents-next-plan.md).
+        """
+        if update.message is None or update.effective_user is None:
+            return
         if await reject_unauthorized(update):
             return
 
-        if board_orchestrator is None:
+        if subagent_runner is None:
             await update.message.reply_text(
-                "Board of Directors not available — claude_client not configured."
+                "Board of Directors not available — subagent runner not configured."
             )
             return
 
@@ -348,6 +364,7 @@ def make_automation_handlers(
 
         user_id = update.effective_user.id
         thread_id: int | None = getattr(update.message, "message_thread_id", None)
+        session_key = SessionManager.get_session_key(user_id, thread_id)
 
         user_context = ""
         if memory_injector is not None:
@@ -368,24 +385,27 @@ def make_automation_handlers(
         wm = WorkingMessage(context.bot, update.message.chat_id, thread_id)
         await wm.start()
 
-        async def _collect_board() -> str:
-            session_key = SessionManager.get_session_key(user_id, thread_id)
-            chunks = [f"🏛 *Board of Directors: {topic}*\n\n"]
-            async for chunk in board_orchestrator.run_board_streaming(
-                topic, user_context, user_id=user_id, session_key=session_key
-            ):
-                chunks.append(chunk)
-            return "".join(chunks)
-
         job_id = await job_store.create(user_id, "board", topic) if job_store else None
-        runner = BackgroundTaskRunner(
+        background_runner = BackgroundTaskRunner(
             context.bot,
             update.message.chat_id,
             job_store=job_store,
             job_id=job_id,
             working_message=wm,
+            thread_id=thread_id,
+            chat_action=ChatAction.UPLOAD_DOCUMENT,
         )
-        asyncio.create_task(runner.run(_collect_board(), label="board analysis"))
+        try:
+            subagent_runner.start_board(
+                background_runner,
+                topic=topic,
+                user_context=user_context,
+                user_id=user_id,
+                session_key=session_key,
+            )
+        except RuntimeError as e:
+            await wm.stop()
+            await update.message.reply_text(str(e))
 
     return {
         "schedule-daily": schedule_daily_command,

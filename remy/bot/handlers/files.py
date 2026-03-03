@@ -33,12 +33,14 @@ def make_file_handlers(
 ):
     """
     Factory that returns file operation handlers.
-    
+
     Returns a dict of command_name -> handler_function.
     """
 
     async def read_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """/read <path> — return contents of a text file in allowed dirs. Files >50KB are summarised."""
+        if update.message is None or update.effective_user is None:
+            return
         if await reject_unauthorized(update):
             return
         if not context.args:
@@ -52,8 +54,8 @@ def make_file_handlers(
         try:
             fpath = Path(sanitized)
             file_size = fpath.stat().st_size
-        except Exception as e:
-            await update.message.reply_text(f"❌ Could not read file: {e}")
+        except Exception as exc:
+            await update.message.reply_text(f"❌ Could not read file: {exc}")
             return
 
         _SIZE_50KB = 50 * 1024
@@ -61,8 +63,8 @@ def make_file_handlers(
             try:
                 with open(sanitized, encoding="utf-8", errors="replace") as f:
                     data = f.read(20000)
-            except Exception as e:
-                await update.message.reply_text(f"❌ Could not read file: {e}")
+            except Exception as exc:
+                await update.message.reply_text(f"❌ Could not read file: {exc}")
                 return
             await update.message.reply_text(
                 f"📄 `{fpath.name}` is large ({file_size // 1024}KB). Summarising…",
@@ -70,10 +72,12 @@ def make_file_handlers(
             )
             try:
                 summary = await claude_client.complete(
-                    messages=[{
-                        "role": "user",
-                        "content": f"Summarise this file concisely:\n\n{data}",
-                    }],
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": f"Summarise this file concisely:\n\n{data}",
+                        }
+                    ],
                     system="You are a file summarisation assistant. Be concise and factual.",
                     max_tokens=512,
                 )
@@ -81,26 +85,27 @@ def make_file_handlers(
                     f"📄 *Summary of {fpath.name}:*\n\n{summary}",
                     parse_mode="Markdown",
                 )
-            except Exception as e:
-                await update.message.reply_text(f"❌ Could not summarise: {e}")
+            except Exception as exc:
+                await update.message.reply_text(f"❌ Could not summarise: {exc}")
             return
 
         try:
             with open(sanitized, encoding="utf-8", errors="replace") as f:
                 data = f.read()
-        except Exception as e:
-            await update.message.reply_text(f"❌ Could not read file: {e}")
+        except Exception as exc:
+            await update.message.reply_text(f"❌ Could not read file: {exc}")
             return
         if len(data) > 8000:
             data = data[:8000] + "\n...[truncated]"
         await update.message.reply_text(
-            ("📄 Contents of %s:\n```\n" +
-             "%s\n```") % (sanitized, data),
+            ("📄 Contents of %s:\n```\n" + "%s\n```") % (sanitized, data),
             parse_mode="Markdown",
         )
 
     async def write_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """/write <path> — prompt user for text to write afterwards."""
+        if update.message is None or update.effective_user is None:
+            return
         if await reject_unauthorized(update):
             return
         if not context.args:
@@ -118,6 +123,8 @@ def make_file_handlers(
 
     async def ls_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """/ls <dir> — list files in a directory under allowed bases."""
+        if update.message is None or update.effective_user is None:
+            return
         if await reject_unauthorized(update):
             return
         if not context.args:
@@ -130,14 +137,14 @@ def make_file_handlers(
             return
         try:
             entries = os.listdir(sanitized)
-            await update.message.reply_text(
-                "\n".join(entries) or "(empty directory)"
-            )
-        except Exception as e:
-            await update.message.reply_text(f"❌ Could not list directory: {e}")
+            await update.message.reply_text("\n".join(entries) or "(empty directory)")
+        except Exception as exc:
+            await update.message.reply_text(f"❌ Could not list directory: {exc}")
 
     async def find_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """/find <pattern> — search filenames under allowed bases."""
+        if update.message is None or update.effective_user is None:
+            return
         if await reject_unauthorized(update):
             return
         if not context.args:
@@ -145,9 +152,12 @@ def make_file_handlers(
             return
         pattern = context.args[0]
         import glob
+
         raw_results = []
         for base in settings.allowed_base_dirs:
-            raw_results.extend(glob.glob(os.path.join(base, "**", pattern), recursive=True))
+            raw_results.extend(
+                glob.glob(os.path.join(base, "**", pattern), recursive=True)
+            )
         results = []
         for r in raw_results:
             safe, err = sanitize_file_path(r, settings.allowed_base_dirs)
@@ -161,6 +171,8 @@ def make_file_handlers(
 
     async def set_project_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """/set-project <path> — remember a project location."""
+        if update.message is None or update.effective_user is None:
+            return
         if await reject_unauthorized(update):
             return
         if not context.args:
@@ -172,13 +184,18 @@ def make_file_handlers(
             await update.message.reply_text(f"❌ {err}")
             return
         from ...models import Fact
+
         fact = Fact(category="project", content=sanitized)
         if fact_store is not None:
             await fact_store.upsert(update.effective_user.id, [fact])
         await update.message.reply_text(f"Project set: {sanitized}")
 
-    async def project_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def project_status_command(
+        update: Update, context: ContextTypes.DEFAULT_TYPE
+    ):
         """/project-status — list remembered project paths with file count and last modified."""
+        if update.message is None or update.effective_user is None:
+            return
         if await reject_unauthorized(update):
             return
         if fact_store is None:
@@ -199,7 +216,9 @@ def make_file_handlers(
                     if all_files:
                         latest = max(x.stat().st_mtime for x in all_files)
                         mod_str = _dt.fromtimestamp(latest).strftime("%Y-%m-%d %H:%M")
-                        lines.append(f"• {path}\n  {file_count} files, last modified {mod_str}")
+                        lines.append(
+                            f"• {path}\n  {file_count} files, last modified {mod_str}"
+                        )
                     else:
                         lines.append(f"• {path}\n  (empty)")
                 except Exception:
@@ -211,8 +230,12 @@ def make_file_handlers(
             parse_mode="Markdown",
         )
 
-    async def scan_downloads_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def scan_downloads_command(
+        update: Update, context: ContextTypes.DEFAULT_TYPE
+    ):
         """/scan-downloads — rich report: type classification, ages, sizes."""
+        if update.message is None or update.effective_user is None:
+            return
         if await reject_unauthorized(update):
             return
         downloads = Path.home() / "Downloads"
@@ -221,8 +244,8 @@ def make_file_handlers(
             return
         try:
             files = [f for f in downloads.iterdir() if f.is_file()]
-        except Exception as e:
-            await update.message.reply_text(f"❌ Could not scan Downloads: {e}")
+        except Exception as exc:
+            await update.message.reply_text(f"❌ Could not scan Downloads: {exc}")
             return
         if not files:
             await update.message.reply_text("✅ Downloads folder is empty.")
@@ -232,12 +255,65 @@ def make_file_handlers(
         total_bytes = 0
 
         _EXTS: list[tuple[frozenset, str, str]] = [
-            (frozenset(["jpg", "jpeg", "png", "gif", "bmp", "webp", "heic", "svg"]), "🖼", "Images"),
-            (frozenset(["mp4", "mov", "avi", "mkv", "m4v", "wmv", "flv"]), "🎥", "Videos"),
+            (
+                frozenset(["jpg", "jpeg", "png", "gif", "bmp", "webp", "heic", "svg"]),
+                "🖼",
+                "Images",
+            ),
+            (
+                frozenset(["mp4", "mov", "avi", "mkv", "m4v", "wmv", "flv"]),
+                "🎥",
+                "Videos",
+            ),
             (frozenset(["mp3", "m4a", "wav", "flac", "aac", "ogg"]), "🎵", "Audio"),
-            (frozenset(["pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "pages", "numbers", "key"]), "📄", "Documents"),
-            (frozenset(["zip", "tar", "gz", "bz2", "7z", "rar", "dmg", "pkg", "iso"]), "📦", "Archives"),
-            (frozenset(["py", "js", "ts", "java", "cpp", "c", "h", "go", "rs", "sh", "json", "yaml", "yml", "toml"]), "💻", "Code"),
+            (
+                frozenset(
+                    [
+                        "pdf",
+                        "doc",
+                        "docx",
+                        "xls",
+                        "xlsx",
+                        "ppt",
+                        "pptx",
+                        "txt",
+                        "pages",
+                        "numbers",
+                        "key",
+                    ]
+                ),
+                "📄",
+                "Documents",
+            ),
+            (
+                frozenset(
+                    ["zip", "tar", "gz", "bz2", "7z", "rar", "dmg", "pkg", "iso"]
+                ),
+                "📦",
+                "Archives",
+            ),
+            (
+                frozenset(
+                    [
+                        "py",
+                        "js",
+                        "ts",
+                        "java",
+                        "cpp",
+                        "c",
+                        "h",
+                        "go",
+                        "rs",
+                        "sh",
+                        "json",
+                        "yaml",
+                        "yml",
+                        "toml",
+                    ]
+                ),
+                "💻",
+                "Code",
+            ),
         ]
 
         def _classify(ext: str) -> tuple[str, str]:
@@ -252,12 +328,17 @@ def make_file_handlers(
                 return f"{b}B"
             if b < 1024 * 1024:
                 return f"{b // 1024}KB"
-            if b < 1024 ** 3:
+            if b < 1024**3:
                 return f"{b // (1024 * 1024)}MB"
-            return f"{b / (1024 ** 3):.1f}GB"
+            return f"{b / (1024**3):.1f}GB"
 
         type_counts: dict[str, tuple[str, int, int]] = {}
-        age_buckets = {"Today (<1d)": 0, "This week (<7d)": 0, "This month (<30d)": 0, "Old (>30d)": 0}
+        age_buckets = {
+            "Today (<1d)": 0,
+            "This week (<7d)": 0,
+            "This month (<30d)": 0,
+            "Old (>30d)": 0,
+        }
         oldest: list[tuple[float, str, int]] = []
 
         for f in files:
@@ -277,10 +358,14 @@ def make_file_handlers(
                 age_buckets["Old (>30d)"] += 1
             oldest.append((stat.st_mtime, f.name, stat.st_size))
 
-        lines = [f"📦 *Downloads Scan* — {len(files)} files ({_fmt_bytes(total_bytes)} total)\n"]
+        lines = [
+            f"📦 *Downloads Scan* — {len(files)} files ({_fmt_bytes(total_bytes)} total)\n"
+        ]
 
         lines.append("*Type breakdown:*")
-        for label, (icon, count, nbytes) in sorted(type_counts.items(), key=lambda x: -x[1][2]):
+        for label, (icon, count, nbytes) in sorted(
+            type_counts.items(), key=lambda x: -x[1][2]
+        ):
             lines.append(f"  {icon} {label}: {count} file(s), {_fmt_bytes(nbytes)}")
 
         lines.append("\n*Age breakdown:*")
@@ -303,6 +388,8 @@ def make_file_handlers(
 
     async def organize_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """/organize <path> — Claude-powered directory organisation suggestions."""
+        if update.message is None or update.effective_user is None:
+            return
         if await reject_unauthorized(update):
             return
         if not context.args:
@@ -319,8 +406,8 @@ def make_file_handlers(
             return
         try:
             entries = sorted([f.name for f in p.iterdir()])
-        except Exception as e:
-            await update.message.reply_text(f"❌ Could not list directory: {e}")
+        except Exception as exc:
+            await update.message.reply_text(f"❌ Could not list directory: {exc}")
             return
         if not entries:
             await update.message.reply_text("Directory is empty.")
@@ -335,15 +422,17 @@ def make_file_handlers(
         listing = "\n".join(entries[:50])
         try:
             suggestions = await claude_client.complete(
-                messages=[{
-                    "role": "user",
-                    "content": (
-                        f"Here is the contents of directory '{sanitized}':\n\n{listing}\n\n"
-                        "Suggest how to organise these files. "
-                        "Recommend folder names and which files should go where. "
-                        "Be specific and actionable."
-                    ),
-                }],
+                messages=[
+                    {
+                        "role": "user",
+                        "content": (
+                            f"Here is the contents of directory '{sanitized}':\n\n{listing}\n\n"
+                            "Suggest how to organise these files. "
+                            "Recommend folder names and which files should go where. "
+                            "Be specific and actionable."
+                        ),
+                    }
+                ],
                 system="You are a helpful file organisation assistant. Be concise and practical.",
                 max_tokens=1024,
             )
@@ -353,11 +442,13 @@ def make_file_handlers(
                 f"📁 *Organisation suggestions for {p.name}:*\n\n{suggestions}",
                 parse_mode="Markdown",
             )
-        except Exception as e:
-            await update.message.reply_text(f"❌ Could not generate suggestions: {e}")
+        except Exception as exc:
+            await update.message.reply_text(f"❌ Could not generate suggestions: {exc}")
 
     async def clean_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """/clean <path> — Claude suggests DELETE/ARCHIVE/KEEP per file."""
+        if update.message is None or update.effective_user is None:
+            return
         if await reject_unauthorized(update):
             return
         if not context.args:
@@ -373,9 +464,11 @@ def make_file_handlers(
             await update.message.reply_text("❌ Not a directory.")
             return
         try:
-            files = sorted([f for f in p.iterdir() if f.is_file()], key=lambda x: x.stat().st_mtime)
-        except Exception as e:
-            await update.message.reply_text(f"❌ Could not list directory: {e}")
+            files = sorted(
+                [f for f in p.iterdir() if f.is_file()], key=lambda x: x.stat().st_mtime
+            )
+        except Exception as exc:
+            await update.message.reply_text(f"❌ Could not list directory: {exc}")
             return
         if not files:
             await update.message.reply_text("No files in directory.")
@@ -397,14 +490,16 @@ def make_file_handlers(
         listing = "\n".join(file_lines)
         try:
             suggestions = await claude_client.complete(
-                messages=[{
-                    "role": "user",
-                    "content": (
-                        f"Review these files from '{sanitized}' and suggest DELETE, ARCHIVE, or KEEP for each:\n\n{listing}\n\n"
-                        "Format your response as:\n"
-                        "• filename.ext — KEEP/ARCHIVE/DELETE — brief reason"
-                    ),
-                }],
+                messages=[
+                    {
+                        "role": "user",
+                        "content": (
+                            f"Review these files from '{sanitized}' and suggest DELETE, ARCHIVE, or KEEP for each:\n\n{listing}\n\n"
+                            "Format your response as:\n"
+                            "• filename.ext — KEEP/ARCHIVE/DELETE — brief reason"
+                        ),
+                    }
+                ],
                 system="You are a helpful file cleanup assistant. Be decisive and practical.",
                 max_tokens=1024,
             )
@@ -414,8 +509,8 @@ def make_file_handlers(
                 f"🗑 *Cleanup suggestions for {p.name}:*\n\n{suggestions}",
                 parse_mode="Markdown",
             )
-        except Exception as e:
-            await update.message.reply_text(f"❌ Could not generate suggestions: {e}")
+        except Exception as exc:
+            await update.message.reply_text(f"❌ Could not generate suggestions: {exc}")
 
     return {
         "read": read_command,

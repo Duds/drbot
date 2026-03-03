@@ -522,13 +522,21 @@ class ProactiveScheduler:
 
         # Agentic path: invoke the full Claude pipeline so Remy can reason,
         # call tools, and respond meaningfully rather than echoing the label.
+        session_manager = self._session_manager
+        conv_store = self._conv_store
+        tool_registry = self._tool_registry
+        claude_client = self._claude_client
         pipeline_available = (
-            self._session_manager is not None
-            and self._conv_store is not None
-            and self._tool_registry is not None
-            and self._claude_client is not None
+            session_manager is not None
+            and conv_store is not None
+            and tool_registry is not None
+            and claude_client is not None
         )
         if pipeline_available:
+            assert claude_client is not None
+            assert tool_registry is not None
+            assert session_manager is not None
+            assert conv_store is not None
             try:
                 from ..bot.pipeline import run_proactive_trigger
 
@@ -537,10 +545,10 @@ class ProactiveScheduler:
                     user_id=user_id,
                     chat_id=chat_id,
                     bot=self._bot,
-                    claude_client=self._claude_client,
-                    tool_registry=self._tool_registry,
-                    session_manager=self._session_manager,
-                    conv_store=self._conv_store,
+                    claude_client=claude_client,
+                    tool_registry=tool_registry,
+                    session_manager=session_manager,
+                    conv_store=conv_store,
                     db=self._db,
                     automation_id=0 if one_time else automation_id,
                     one_time=one_time,
@@ -673,7 +681,7 @@ class ProactiveScheduler:
             return
 
         try:
-            messages = await get_messages_for_remy()
+            messages, _ = await get_messages_for_remy()
             for msg in messages:
                 from_agent = msg.get("from_agent") or "cowork"
                 content = (msg.get("content") or "").strip()
@@ -685,7 +693,7 @@ class ProactiveScheduler:
             logger.warning("Relay inbox poll (messages) failed: %s", e)
 
         try:
-            tasks = await get_tasks_for_remy()
+            tasks, _ = await get_tasks_for_remy()
             for task in tasks:
                 task_id = task.get("id") or "?"
                 task_type = task.get("task_type") or "general"
@@ -918,6 +926,8 @@ class ProactiveScheduler:
 
         Returns dict with facts_stored and goals_stored counts.
         """
+        if self._conv_store is None:
+            return {"facts_stored": 0, "goals_stored": 0}
         turns = await self._conv_store.get_today_messages(user_id)
         if not turns:
             logger.debug("No conversations today for user %d", user_id)
@@ -971,6 +981,8 @@ class ProactiveScheduler:
             'If nothing worth storing, return: {"facts": [], "goals": []}'
         )
 
+        if self._claude_client is None:
+            return {"facts_stored": 0, "goals_stored": 0}
         try:
             response = await self._claude_client.complete(
                 messages=[{"role": "user", "content": prompt}],

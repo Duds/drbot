@@ -9,6 +9,7 @@ import os
 import signal
 
 from .agents.orchestrator import BoardOrchestrator
+from .agents.subagent_runner import SubagentRunner
 from .ai.claude_client import ClaudeClient
 from .ai.mistral_client import MistralClient
 from .ai.moonshot_client import MoonshotClient
@@ -18,7 +19,7 @@ from .ai.tool_registry import ToolRegistry
 from .bot.handlers import make_handlers
 from .bot.session import SessionManager
 from .bot.telegram_bot import TelegramBot
-from .config import settings
+from .config import get_settings, settings
 from .health import (
     run_health_server,
     set_data_dir,
@@ -110,8 +111,9 @@ def main() -> None:
     # Bot reference is set in post_init once PTB application is ready
     outbound_queue = OutboundQueue(db_path=db.db_path, bot=None)
 
-    # Board of Directors orchestrator (Phase 5)
+    # Board of Directors orchestrator (Phase 5); subagent runner for /board (US-subagents-next-plan)
     board_orchestrator = BoardOrchestrator(claude_client)
+    subagent_runner = SubagentRunner(board_orchestrator)
 
     # Tool registry — enables native Anthropic tool use (function calling)
     # Wired after memory components are initialised below
@@ -254,7 +256,7 @@ def main() -> None:
         ollama_client=ollama_client,
         tool_registry=tool_registry,
         scheduler=None,  # Late-bound via _late
-        settings=settings,
+        settings=get_settings(),
     )
     _late["diagnostics_runner"] = diagnostics_runner
 
@@ -291,7 +293,7 @@ def main() -> None:
         memory_injector=memory_injector,
         voice_transcriber=voice_transcriber,
         proactive_scheduler=None,  # /goals works immediately; /briefing via proxy
-        board_orchestrator=board_orchestrator,
+        subagent_runner=subagent_runner,
         db=db,
         tool_registry=tool_registry,  # Native Anthropic tool use
         google_calendar=google_calendar,

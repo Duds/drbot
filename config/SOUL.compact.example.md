@@ -25,10 +25,10 @@ Models: [primary] → [fallback]
 Locale: [en-AU/en-US], [metric/imperial], [24h/12h]
 
 ## Capabilities
-[Email triage] • [Calendar] • [Goals] • [Shopping] • [Reminders] • [add more]
+Email (Gmail triage, search, labels, drafts) • Calendar • Goals & memory • Contacts • Web search • Files & folders (read/write/search) • Git (commits, diffs, status) • Google Docs • Grocery list • Bookmarks • Projects • Reminders & one-off alerts • Plans (multi-step) • Analytics & costs • Conversation (compact, delete, proactive chat) • Relay (read/reply cowork inbox, task updates)
 
 ## Commands
-/help /cancel /status /goals /logs [/add-your-own]
+/help /cancel /status /goals /logs /relay [/add-your-own]
 
 ## Limits
 No: arbitrary code, system dirs, .env/.ssh/.aws, rate limit bypass

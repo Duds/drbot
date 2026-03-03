@@ -34,7 +34,7 @@ def make_privacy_handlers(
 ):
     """
     Factory that returns privacy-related handlers.
-    
+
     Returns a dict of command_name -> handler_function.
     """
 
@@ -46,11 +46,15 @@ def make_privacy_handlers(
         (names, emails, usernames) and searches for data broker presence,
         breach exposure, and privacy hygiene issues.
         """
+        if update.message is None or update.effective_user is None:
+            return
         if await reject_unauthorized(update):
             return
 
         if claude_client is None:
-            await update.message.reply_text("Privacy audit unavailable — no Claude client.")
+            await update.message.reply_text(
+                "Privacy audit unavailable — no Claude client."
+            )
             return
 
         user_id = update.effective_user.id
@@ -91,7 +95,8 @@ Start by introducing the audit and asking for the first identifier to check."""
         thread_id: int | None = getattr(update.message, "message_thread_id", None)
         session_key = SessionManager.get_session_key(user_id, thread_id)
         async with session_manager.get_lock(user_id):
-            await conv_store.add_turn(
+            await conv_store.append_turn(
+                user_id,
                 session_key,
                 ConversationTurn(role="user", content="/privacy-audit"),
             )
@@ -102,6 +107,7 @@ Start by introducing the audit and asking for the first identifier to check."""
                 try:
                     response_parts = []
                     from ...ai.claude_client import TextChunk
+
                     async for event in claude_client.stream_with_tools(
                         messages=[{"role": "user", "content": initial_message}],
                         tool_registry=tool_registry,
@@ -117,7 +123,8 @@ Start by introducing the audit and asking for the first identifier to check."""
                     await sent.edit_text(f"❌ Could not start privacy audit: {exc}")
                     return
 
-                await conv_store.add_turn(
+                await conv_store.append_turn(
+                    user_id,
                     session_key,
                     ConversationTurn(role="assistant", content=response),
                 )
@@ -144,10 +151,13 @@ Start by introducing the audit and asking for the first identifier to check."""
                     )
                 except Exception as exc:
                     logger.error("Privacy audit error for user %d: %s", user_id, exc)
-                    await update.message.reply_text(f"❌ Could not start privacy audit: {exc}")
+                    await update.message.reply_text(
+                        f"❌ Could not start privacy audit: {exc}"
+                    )
                     return
 
-                await conv_store.add_turn(
+                await conv_store.append_turn(
+                    user_id,
                     session_key,
                     ConversationTurn(role="assistant", content=response),
                 )

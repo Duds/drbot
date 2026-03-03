@@ -32,6 +32,7 @@ from ..analytics.timing import RequestTiming, PhaseTimer
 from ..bot.working_message import WorkingMessage
 from ..ai.claude_client import (
     AnthropicOverloadFallbackAvailable,
+    StepLimitReached,
     TextChunk,
     ToolResultChunk,
     ToolStatusChunk,
@@ -1885,6 +1886,8 @@ def make_handlers(
             job_store=job_store,
             job_id=job_id,
             working_message=wm,
+            thread_id=thread_id,
+            chat_action=ChatAction.UPLOAD_DOCUMENT,
         )
         asyncio.create_task(runner.run(_collect_board(), label="board analysis"))
 
@@ -2428,6 +2431,8 @@ Start by introducing the audit and asking for the first identifier to check."""
             job_store=job_store,
             job_id=job_id,
             working_message=wm,
+            thread_id=thread_id,
+            chat_action=ChatAction.UPLOAD_DOCUMENT,
         )
         asyncio.create_task(runner.run(_run_retrospective(), label="retrospective"))
 
@@ -2503,6 +2508,8 @@ Start by introducing the audit and asking for the first identifier to check."""
             job_store=job_store,
             job_id=job_id,
             working_message=wm,
+            thread_id=thread_id,
+            chat_action=ChatAction.UPLOAD_DOCUMENT,
         )
         asyncio.create_task(runner.run(_run_reindex(), label="reindex"))
 
@@ -2555,6 +2562,8 @@ Start by introducing the audit and asking for the first identifier to check."""
             job_store=job_store,
             job_id=job_id,
             working_message=wm,
+            thread_id=thread_id,
+            chat_action=ChatAction.UPLOAD_DOCUMENT,
         )
         asyncio.create_task(runner.run(_run_consolidation(), label="consolidate"))
 
@@ -2667,6 +2676,7 @@ Start by introducing the audit and asking for the first identifier to check."""
         tool_turns: list[
             tuple[list[dict], list[dict]]
         ] = []  # (assistant_blocks, result_blocks)
+        step_limit_reached = False
 
         in_tool_turn = False  # True between ToolStatusChunk and ToolTurnComplete;
         # TextChunks arriving in this window are suppressed
@@ -2674,26 +2684,29 @@ Start by introducing the audit and asking for the first identifier to check."""
         rotator = MessageRotator(sent, user_id)
         rotator_stopped = False
 
-        async def _flush_display(final: bool = False) -> None:
+        async def _flush_display(final: bool = False, reply_markup=None) -> None:
             """Push accumulated display text to Telegram message."""
             nonlocal last_edit_len
             full = "".join(current_display)
             suffix = "" if final else " …"
             candidate = full + suffix
 
-            if not candidate.strip():
+            if not candidate.strip() and not (final and reply_markup):
                 return  # nothing to show — avoid blank-message errors
 
-            # Only edit if there's meaningful new content
+            # Only edit if there's meaningful new content or final with keyboard
             if len(full) > last_edit_len + 50 or final:
-                truncated = candidate[:4000]
+                truncated = candidate[:4000] if candidate.strip() else "✓"
+                kwargs = {}
+                if final and reply_markup is not None:
+                    kwargs["reply_markup"] = reply_markup
                 try:
-                    await sent.edit_text(truncated, parse_mode="Markdown")
+                    await sent.edit_text(truncated, parse_mode="Markdown", **kwargs)
                     last_edit_len = len(full)
                 except Exception as _md_err:
                     # Partial stream may have unbalanced markdown — fall back to plain
                     try:
-                        await sent.edit_text(truncated)
+                        await sent.edit_text(truncated, **kwargs)
                         last_edit_len = len(full)
                     except Exception as e:
                         logger.debug("Message edit failed (flood control): %s", e)
@@ -2814,6 +2827,9 @@ Start by introducing the audit and asking for the first identifier to check."""
                     current_display = []
                     last_edit_len = 0
 
+                elif isinstance(event, StepLimitReached):
+                    step_limit_reached = True
+
         except AnthropicOverloadFallbackAvailable as e:
             if not rotator_stopped:
                 await rotator.stop()
@@ -2899,6 +2915,8 @@ Start by introducing the audit and asking for the first identifier to check."""
                         )
                         current_display = []
                         last_edit_len = 0
+                    elif isinstance(event, StepLimitReached):
+                        step_limit_reached = True
             except Exception as retry_exc:
                 if not rotator_stopped:
                     await rotator.stop()
@@ -2954,8 +2972,11 @@ Start by introducing the audit and asking for the first identifier to check."""
             {"user_id": user_id, "text_preview": final_text_preview},
         )
 
-        # Final flush — show complete response
-        await _flush_display(final=True)
+        # Final flush — show complete response (step-limit keyboard if hit)
+        from ..bot.handlers.callbacks import make_step_limit_keyboard
+
+        reply_markup = make_step_limit_keyboard() if step_limit_reached else None
+        await _flush_display(final=True, reply_markup=reply_markup)
 
         # Calculate streaming time (total - ttft - tool execution)
         streaming_ms = (

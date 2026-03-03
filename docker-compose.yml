@@ -10,6 +10,8 @@ services:
       DATA_DIR: /app/data
       OLLAMA_BASE_URL: http://ollama:11434
       HEALTH_PORT: "8080"
+      # Git tools (Bug 41): point at remy repo so git_log/git_diff/etc. work. Override in .env if your repo path differs.
+      WORKSPACE_ROOT: ${WORKSPACE_ROOT:-/home/remy/Projects/ai-agents/remy}
     ports:
       - "8080:8080"   # health check endpoint
     volumes:

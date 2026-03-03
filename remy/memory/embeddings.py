@@ -15,9 +15,12 @@ import asyncio
 import logging
 import os
 import threading
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .database import SQLITE_VEC_AVAILABLE, DatabaseManager
+
+if TYPE_CHECKING:
+    from sentence_transformers import SentenceTransformer
 
 logger = logging.getLogger(__name__)
 
@@ -44,13 +47,14 @@ _encode_semaphore: asyncio.Semaphore | None = None
 
 def _get_encode_semaphore() -> asyncio.Semaphore:
     """Return the module-level asyncio semaphore, creating it if needed.
-    
+
     Must be called from within an async context (i.e. after the event loop exists).
     """
     global _encode_semaphore
     if _encode_semaphore is None:
         _encode_semaphore = asyncio.Semaphore(_MAX_CONCURRENT_ENCODES)
     return _encode_semaphore
+
 
 # Keep the torch inductor cache in a persistent user directory rather than
 # /tmp, which can fill up and break the precompile step entirely.  The
@@ -75,6 +79,7 @@ os.environ.setdefault("OMP_NUM_THREADS", "1")
 
 
 # --- housekeeping helpers ---------------------------------------------------
+
 
 def _cleanup_tmp_cache() -> None:
     """Remove leftover torchinductor temp directories to avoid disk leaks.
@@ -106,7 +111,7 @@ except Exception:  # pragma: no cover
     pass
 
 
-def _load_model() -> "SentenceTransformer":  # noqa: F821
+def _load_model() -> "SentenceTransformer":
     """Load and warm up the SentenceTransformer (must be called under _model_lock)."""
     from sentence_transformers import SentenceTransformer
 
@@ -142,7 +147,7 @@ class EmbeddingStore:
         encode call.  In that case the helper above will wipe any temporary
         cache directories and we retry once; if the second attempt still fails
         we propagate the error normally.
-        
+
         Encode calls are limited to 2 concurrent operations via a semaphore to
         balance throughput with ONNX runtime thread-safety concerns.
         """
@@ -157,7 +162,9 @@ class EmbeddingStore:
                 embedding = await loop.run_in_executor(None, _do_encode)
             except OSError as e:  # pragma: no cover - path triggered empirically
                 if e.errno == 28:  # no space
-                    logger.warning("disk full during embedding; cleaning tmp cache and retrying")
+                    logger.warning(
+                        "disk full during embedding; cleaning tmp cache and retrying"
+                    )
                     _cleanup_tmp_cache()
                     embedding = await loop.run_in_executor(None, _do_encode)
                 else:
@@ -167,6 +174,7 @@ class EmbeddingStore:
     def _vec_bytes(self, embedding: list[float]) -> bytes:
         """Serialize float list to little-endian float32 bytes for sqlite-vec."""
         import struct
+
         return struct.pack(f"{len(embedding)}f", *embedding)
 
     async def upsert_embedding(
@@ -191,7 +199,10 @@ class EmbeddingStore:
                 """,
                 (user_id, source_type, source_id, text, _MODEL_NAME),
             )
-            embedding_id = cursor.lastrowid
+            embedding_id_raw = cursor.lastrowid
+            if embedding_id_raw is None:
+                raise RuntimeError("INSERT into embeddings did not return lastrowid")
+            embedding_id = embedding_id_raw
 
             if SQLITE_VEC_AVAILABLE:
                 try:
@@ -250,7 +261,7 @@ class EmbeddingStore:
         recency_boost: bool = False,
     ) -> list[dict[str, Any]]:
         """ANN search filtered to a specific source_type (fact / goal / message).
-        
+
         Args:
             recency_boost: If True, results from the last 30 days are weighted
                           higher by applying a distance penalty to older items.

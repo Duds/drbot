@@ -43,6 +43,8 @@ class SubAgent(ABC):
     def __init__(self, claude_client: "ClaudeClient", db=None) -> None:
         self._client = claude_client
         self._db = db
+        self._current_user_id: int | None = None
+        self._current_session_key: str | None = None
 
     @abstractmethod
     async def analyze(
@@ -93,7 +95,7 @@ class SubAgent(ABC):
                 max_tokens=max_tokens,
                 usage_out=usage,
             )
-            
+
             user_id = getattr(self, "_current_user_id", None)
             session_key = getattr(self, "_current_session_key", None)
             if self._db is not None and user_id is not None and session_key is not None:

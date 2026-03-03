@@ -27,12 +27,14 @@ def make_docs_handlers(
 ):
     """
     Factory that returns Google Docs handlers.
-    
+
     Returns a dict of command_name -> handler_function.
     """
 
     async def gdoc_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """/gdoc <url-or-id> — read a Google Doc (large docs are summarised)."""
+        if update.message is None or update.effective_user is None:
+            return
         if await reject_unauthorized(update):
             return
         if google_docs is None:
@@ -45,8 +47,8 @@ def make_docs_handlers(
         await update.message.reply_text("📄 Fetching document…")
         try:
             title, text = await google_docs.read_document(id_or_url)
-        except Exception as e:
-            await update.message.reply_text(f"❌ Could not fetch doc: {e}")
+        except Exception as exc:
+            await update.message.reply_text(f"❌ Could not fetch doc: {exc}")
             return
         _SIZE_50KB = 50 * 1024
         if len(text.encode()) > _SIZE_50KB and claude_client is not None:
@@ -55,15 +57,20 @@ def make_docs_handlers(
             )
             try:
                 summary = await claude_client.complete(
-                    messages=[{"role": "user", "content": f"Summarise this document:\n\n{text[:20000]}"}],
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": f"Summarise this document:\n\n{text[:20000]}",
+                        }
+                    ],
                     system="You are a document summarisation assistant. Be concise and factual.",
                     max_tokens=512,
                 )
                 await update.message.reply_text(
                     f"📄 *Summary of {title}:*\n\n{summary}", parse_mode="Markdown"
                 )
-            except Exception as e:
-                await update.message.reply_text(f"❌ Could not summarise: {e}")
+            except Exception as exc:
+                await update.message.reply_text(f"❌ Could not summarise: {exc}")
             return
         if len(text) > 8000:
             text = text[:8000] + "\n…[truncated]"
@@ -74,6 +81,8 @@ def make_docs_handlers(
 
     async def gdoc_append_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """/gdoc-append <url-or-id> <text> — append text to a Google Doc."""
+        if update.message is None or update.effective_user is None:
+            return
         if await reject_unauthorized(update):
             return
         if google_docs is None:
@@ -89,8 +98,8 @@ def make_docs_handlers(
         try:
             await google_docs.append_text(id_or_url, text_to_append)
             await update.message.reply_text("✅ Text appended to document.")
-        except Exception as e:
-            await update.message.reply_text(f"❌ Could not append to doc: {e}")
+        except Exception as exc:
+            await update.message.reply_text(f"❌ Could not append to doc: {exc}")
 
     return {
         "gdoc": gdoc_command,

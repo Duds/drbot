@@ -40,7 +40,10 @@ class PlanStore:
                 """,
                 (user_id, title, description, now, now),
             )
-            plan_id = cursor.lastrowid
+            plan_id_raw = cursor.lastrowid
+            if plan_id_raw is None:
+                raise RuntimeError("INSERT into plans did not return lastrowid")
+            plan_id = plan_id_raw
 
             if steps:
                 for position, step_title in enumerate(steps, start=1):
@@ -53,7 +56,12 @@ class PlanStore:
                     )
 
             await conn.commit()
-            logger.info("Created plan %d with %d steps for user %d", plan_id, len(steps or []), user_id)
+            logger.info(
+                "Created plan %d with %d steps for user %d",
+                plan_id,
+                len(steps or []),
+                user_id,
+            )
             return plan_id
 
     async def add_step(
@@ -64,7 +72,7 @@ class PlanStore:
         position: int | None = None,
     ) -> int:
         """Add a step to an existing plan. Returns the step ID.
-        
+
         If position is not specified, appends to the end.
         """
         now = datetime.now(timezone.utc).isoformat()
@@ -75,7 +83,7 @@ class PlanStore:
                     (plan_id,),
                 )
                 row = await cursor.fetchone()
-                position = row[0]
+                position = int(row[0]) if row is not None else 1
 
             cursor = await conn.execute(
                 """
@@ -84,7 +92,10 @@ class PlanStore:
                 """,
                 (plan_id, position, title, notes, now, now),
             )
-            step_id = cursor.lastrowid
+            step_id_raw = cursor.lastrowid
+            if step_id_raw is None:
+                raise RuntimeError("INSERT into plan_steps did not return lastrowid")
+            step_id = step_id_raw
 
             await conn.execute(
                 "UPDATE plans SET updated_at = ? WHERE id = ?",
@@ -101,7 +112,9 @@ class PlanStore:
         """Update the status of a step. Returns True if updated."""
         valid_statuses = {"pending", "in_progress", "done", "skipped", "blocked"}
         if status not in valid_statuses:
-            raise ValueError(f"Invalid status: {status}. Must be one of {valid_statuses}")
+            raise ValueError(
+                f"Invalid status: {status}. Must be one of {valid_statuses}"
+            )
 
         now = datetime.now(timezone.utc).isoformat()
         async with self._db.get_connection() as conn:
@@ -135,7 +148,8 @@ class PlanStore:
                 (notes, now, step_id),
             )
             await conn.commit()
-            return cursor.rowcount > 0
+            rc = cursor.rowcount
+            return rc is not None and rc > 0
 
     async def add_attempt(
         self,
@@ -153,7 +167,12 @@ class PlanStore:
                 """,
                 (step_id, now, outcome, notes),
             )
-            attempt_id = cursor.lastrowid
+            attempt_id_raw = cursor.lastrowid
+            if attempt_id_raw is None:
+                raise RuntimeError(
+                    "INSERT into plan_step_attempts did not return lastrowid"
+                )
+            attempt_id = attempt_id_raw
 
             await conn.execute(
                 "UPDATE plan_steps SET updated_at = ? WHERE id = ?",
@@ -165,7 +184,7 @@ class PlanStore:
                 (step_id,),
             )
             row = await cursor.fetchone()
-            if row:
+            if row is not None:
                 await conn.execute(
                     "UPDATE plans SET updated_at = ? WHERE id = ?",
                     (now, row["plan_id"]),
@@ -217,7 +236,9 @@ class PlanStore:
             plan["steps"] = steps
             return plan
 
-    async def get_plan_by_title(self, user_id: int, title: str) -> dict[str, Any] | None:
+    async def get_plan_by_title(
+        self, user_id: int, title: str
+    ) -> dict[str, Any] | None:
         """Find a plan by fuzzy title match. Returns the first match."""
         async with self._db.get_connection() as conn:
             cursor = await conn.execute(
@@ -239,7 +260,7 @@ class PlanStore:
         status: str = "active",
     ) -> list[dict[str, Any]]:
         """List plans for a user with step progress summary.
-        
+
         status can be: 'active', 'complete', 'abandoned', or 'all'
         """
         async with self._db.get_connection() as conn:
@@ -285,7 +306,9 @@ class PlanStore:
         """Update the overall plan status. Returns True if updated."""
         valid_statuses = {"active", "complete", "abandoned"}
         if status not in valid_statuses:
-            raise ValueError(f"Invalid status: {status}. Must be one of {valid_statuses}")
+            raise ValueError(
+                f"Invalid status: {status}. Must be one of {valid_statuses}"
+            )
 
         now = datetime.now(timezone.utc).isoformat()
         async with self._db.get_connection() as conn:
@@ -302,7 +325,7 @@ class PlanStore:
         days: int = 7,
     ) -> list[dict[str, Any]]:
         """Find steps that have been pending/in_progress for too long without activity.
-        
+
         Returns steps from active plans where updated_at is older than `days` days.
         """
         async with self._db.get_connection() as conn:

@@ -29,13 +29,23 @@ _EXTRACTION_PROMPT = 'Extract goals/intentions from this message:\n\n"""{message
 
 # Trigger phrases that strongly indicate a goal
 _GOAL_TRIGGERS = [
-    "i want to", "i'd like to", "i would like to",
-    "i'm trying to", "i am trying to",
-    "my goal is", "my aim is", "my objective is",
-    "i need to", "i plan to", "i intend to",
-    "i'm working on", "i am working on",
-    "i'm building", "i am building",
-    "i hope to", "i'm hoping to",
+    "i want to",
+    "i'd like to",
+    "i would like to",
+    "i'm trying to",
+    "i am trying to",
+    "my goal is",
+    "my aim is",
+    "my objective is",
+    "i need to",
+    "i plan to",
+    "i intend to",
+    "i'm working on",
+    "i am working on",
+    "i'm building",
+    "i am building",
+    "i hope to",
+    "i'm hoping to",
 ]
 
 
@@ -104,8 +114,10 @@ class GoalStore:
         for goal in goals:
             title_lower = goal.title.lower()
             # Simple dedup: skip if title already exists (case-insensitive)
-            if any(title_lower in existing.lower() or existing.lower() in title_lower
-                   for existing in existing_titles):
+            if any(
+                title_lower in existing.lower() or existing.lower() in title_lower
+                for existing in existing_titles
+            ):
                 logger.debug("Goal already tracked, skipping: %s", goal.title)
                 continue
             await self._insert(user_id, goal)
@@ -120,7 +132,10 @@ class GoalStore:
                 """,
                 (user_id, goal.title, goal.description),
             )
-            goal_id = cursor.lastrowid
+            goal_id_raw = cursor.lastrowid
+            if goal_id_raw is None:
+                raise RuntimeError("INSERT into goals did not return lastrowid")
+            goal_id = goal_id_raw
             await conn.commit()
 
         embed_text = f"{goal.title}. {goal.description or ''}"
@@ -204,7 +219,8 @@ class GoalStore:
                     (new_description, goal_id, user_id),
                 )
             await conn.commit()
-            return cursor.rowcount > 0
+            rc = cursor.rowcount
+            return rc is not None and rc > 0
 
     async def delete(self, user_id: int, goal_id: int) -> bool:
         """Permanently delete a goal row. Returns True if a row was deleted."""
@@ -214,7 +230,8 @@ class GoalStore:
                 (goal_id, user_id),
             )
             await conn.commit()
-            return cursor.rowcount > 0
+            rc = cursor.rowcount
+            return rc is not None and rc > 0
 
     async def add(
         self, user_id: int, title: str, description: str | None = None
@@ -223,11 +240,13 @@ class GoalStore:
         goal = Goal(title=title[:200], description=description)
         await self._insert(user_id, goal)
         async with self._db.get_connection() as conn:
-            rows = await conn.execute_fetchall(
-                "SELECT id FROM goals WHERE user_id=? AND title=? ORDER BY id DESC LIMIT 1",
-                (user_id, title),
+            rows = list(
+                await conn.execute_fetchall(
+                    "SELECT id FROM goals WHERE user_id=? AND title=? ORDER BY id DESC LIMIT 1",
+                    (user_id, title),
+                )
             )
-            return rows[0]["id"] if rows else 0
+            return int(rows[0]["id"]) if rows else 0
 
 
 async def extract_and_store_goals(

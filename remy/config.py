@@ -175,6 +175,15 @@ class Settings(BaseSettings):
     # Comma-separated list of base directories for file operations
     allowed_base_dirs_raw: str = "~/Projects,~/Documents,~/Downloads"
 
+    # ── Git tool (US-git-commits-and-diffs) ─────────────────────────────────────
+    # If set, git_log / git_diff / etc. run from this directory. Empty = use cwd.
+    workspace_root: str = ""
+
+    # ── Relay (US-claude-desktop-relay) ────────────────────────────────────────
+    # If set, Remy uses HTTP to talk to relay_mcp. Empty = use shared SQLite (db_path).
+    relay_mcp_url: str = ""
+    relay_mcp_secret: str = ""
+
     @property
     def google_token_file(self) -> str:
         return os.path.join(self.data_dir, "google_token.json")
@@ -258,7 +267,7 @@ def get_settings() -> "Settings":
     """Return the application settings singleton."""
     global _settings
     if _settings is None:
-        _settings = Settings()
+        _settings = Settings()  # type: ignore[call-arg]
     return _settings
 
 

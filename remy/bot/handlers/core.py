@@ -33,11 +33,13 @@ def make_core_handlers(
 ):
     """
     Factory that returns core command handlers.
-    
+
     Returns a dict of command_name -> handler_function.
     """
 
     async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if update.message is None or update.effective_user is None:
+            return
         if await reject_unauthorized(update):
             return
         await update.message.reply_text(
@@ -85,6 +87,7 @@ def make_core_handlers(
             "  /grocery-list [add/done/clear] — grocery list management\n"
             "  /price-check <item> — search for current prices\n"
             "  /briefing  — get your morning briefing now\n"
+            "  /relay     — show pending relay inbox from cowork\n"
             "  /setmychat — set this chat for proactive messages\n"
             "  /board <topic> — convene the Board of Directors\n"
             "  /schedule_daily [HH:MM] <task>        — remind me daily\n"
@@ -102,9 +105,13 @@ def make_core_handlers(
         )
 
     async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if update.message is None or update.effective_user is None:
+            return
         await start_command(update, context)
 
     async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if update.message is None or update.effective_user is None:
+            return
         if await reject_unauthorized(update):
             return
         user_id = update.effective_user.id
@@ -113,17 +120,27 @@ def make_core_handlers(
         await update.message.reply_text("Stopping current task…")
 
     async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if update.message is None or update.effective_user is None:
+            return
         if await reject_unauthorized(update):
             return
-        
+
         if tool_registry is not None:
-            status_text = await tool_registry.dispatch("check_status", {}, update.effective_user.id)
+            status_text = await tool_registry.dispatch(
+                "check_status", {}, update.effective_user.id
+            )
             await update.message.reply_text(status_text)
         else:
-            await update.message.reply_text("Status check not available — tool registry not configured.")
+            await update.message.reply_text(
+                "Status check not available — tool registry not configured."
+            )
 
     async def setmychat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if update.message is None or update.effective_user is None:
+            return
         if await reject_unauthorized(update):
+            return
+        if update.effective_chat is None:
             return
         chat_id = str(update.effective_chat.id)
         path = settings.primary_chat_file
@@ -134,11 +151,13 @@ def make_core_handlers(
             await update.message.reply_text(
                 f"This chat is now set for proactive messages. (ID: {chat_id})"
             )
-        except OSError as e:
-            await update.message.reply_text(f"Could not save: {e}")
+        except OSError as exc:
+            await update.message.reply_text(f"Could not save: {exc}")
 
     async def briefing_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Manually trigger the morning briefing right now."""
+        if update.message is None or update.effective_user is None:
+            return
         if await reject_unauthorized(update):
             return
         _sched = (scheduler_ref or {}).get("proactive_scheduler") or proactive_scheduler
@@ -148,6 +167,77 @@ def make_core_handlers(
         await update.message.reply_text("Sending briefing…")
         await _sched.send_morning_briefing_now()
 
+    async def relay_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show pending relay inbox: unread messages and pending tasks from cowork."""
+        if update.message is None or update.effective_user is None:
+            return
+        if await reject_unauthorized(update):
+            return
+        user_id = update.effective_user.id
+        if tool_registry is None:
+            await update.message.reply_text(
+                "Relay not available — tool registry not configured."
+            )
+            return
+        try:
+            msg_result = await tool_registry.dispatch(
+                "relay_get_messages",
+                {"unread_only": True, "mark_read": False, "limit": 20},
+                user_id,
+            )
+            task_result = await tool_registry.dispatch(
+                "relay_get_tasks",
+                {"status": "pending", "limit": 20},
+                user_id,
+            )
+        except Exception as exc:
+            await update.message.reply_text(f"Relay unavailable — {exc}")
+            return
+
+        import json
+
+        parts = []
+        try:
+            msg_data = json.loads(msg_result)
+            messages = msg_data.get("messages") or []
+            unread = msg_data.get("unread_count", 0)
+            if unread == 0 and not messages:
+                task_data = json.loads(task_result)
+                tasks = task_data.get("tasks") or []
+                pending = task_data.get("pending_count", 0)
+                if pending == 0 and not tasks:
+                    await update.message.reply_text(
+                        "Relay inbox is clear — nothing from cowork."
+                    )
+                    return
+            if messages or unread > 0:
+                parts.append(f"📬 *{unread} unread message(s) from cowork:*")
+                for m in (messages or [])[:10]:
+                    from_agent = m.get("from_agent") or "cowork"
+                    content = (m.get("content") or "").strip()[:200]
+                    if len((m.get("content") or "")) > 200:
+                        content += "…"
+                    parts.append(f"• _{from_agent}:_\n{content}")
+                if unread > 10:
+                    parts.append(f"_…and {unread - 10} more_")
+            task_data = json.loads(task_result)
+            tasks = task_data.get("tasks") or []
+            pending = task_data.get("pending_count", 0)
+            if tasks or pending > 0:
+                parts.append(f"\n📋 *{pending} pending task(s):*")
+                for t in (tasks or [])[:10]:
+                    tid = t.get("id") or "?"
+                    task_type = t.get("task_type") or "general"
+                    desc = (t.get("description") or "")[:150]
+                    if len((t.get("description") or "")) > 150:
+                        desc += "…"
+                    parts.append(f"• `{tid}` — {task_type}: {desc}")
+                if pending > 10:
+                    parts.append(f"_…and {pending - 10} more_")
+            await update.message.reply_text("\n".join(parts))
+        except (json.JSONDecodeError, KeyError) as exc:
+            await update.message.reply_text(f"Could not read relay — {exc}")
+
     return {
         "start": start_command,
         "help": help_command,
@@ -155,4 +245,5 @@ def make_core_handlers(
         "status": status_command,
         "setmychat": setmychat_command,
         "briefing": briefing_command,
+        "relay": relay_command,
     }
