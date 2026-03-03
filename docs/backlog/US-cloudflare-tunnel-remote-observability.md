@@ -118,6 +118,64 @@ make telemetry HOST=remy.<domain> TOKEN=<HEALTH_API_TOKEN>
 make logs HOST=remy.<domain> TOKEN=<HEALTH_API_TOKEN> LINES=100
 ```
 
+---
+
+## Live Endpoints — https://remy.dalerogers.com.au
+
+### Public (no auth)
+
+| Endpoint | Method | Response |
+|---|---|---|
+| `/` | GET | `{"service": "remy", "version": "1.0"}` |
+| `/health` | GET | `{"status": "ok", "uptime_s": N}` |
+| `/ready` | GET | `{"status": "ready"}` or `503 {"status": "starting"}` |
+| `/metrics` | GET | Prometheus metrics (text format) |
+
+### Protected — requires `Authorization: Bearer <HEALTH_API_TOKEN>`
+
+| Endpoint | Method | Query params | Response |
+|---|---|---|---|
+| `/diagnostics` | GET | — | Full system diagnostics JSON (DB, scheduler, embeddings, config) |
+| `/logs` | GET | `lines=100` (max 500), `level=ERROR\|WARNING\|INFO`, `since=startup\|1h\|6h\|24h\|all` | Recent log lines (plain text) |
+| `/telemetry` | GET | `window=1h\|6h\|24h\|7d` (default `24h`) | API call stats JSON: total calls, tokens, latency, model breakdown |
+
+### Quick-reference curl commands
+
+```bash
+# Health (public)
+curl https://remy.dalerogers.com.au/health
+
+# Telemetry — last 24h
+curl -H "Authorization: Bearer $HEALTH_API_TOKEN" https://remy.dalerogers.com.au/telemetry | python3 -m json.tool
+
+# Telemetry — last 7 days
+curl -H "Authorization: Bearer $HEALTH_API_TOKEN" "https://remy.dalerogers.com.au/telemetry?window=7d" | python3 -m json.tool
+
+# Logs — last 100 lines from current session
+curl -H "Authorization: Bearer $HEALTH_API_TOKEN" https://remy.dalerogers.com.au/logs
+
+# Logs — last 200 error/warning lines
+curl -H "Authorization: Bearer $HEALTH_API_TOKEN" "https://remy.dalerogers.com.au/logs?lines=200&level=WARNING"
+
+# Logs — all logs from last 6 hours
+curl -H "Authorization: Bearer $HEALTH_API_TOKEN" "https://remy.dalerogers.com.au/logs?since=6h&lines=500"
+
+# Diagnostics
+curl -H "Authorization: Bearer $HEALTH_API_TOKEN" https://remy.dalerogers.com.au/diagnostics | python3 -m json.tool
+```
+
+### Makefile shortcuts
+
+```bash
+# Telemetry (24h default)
+make telemetry HOST=remy.dalerogers.com.au TOKEN=$HEALTH_API_TOKEN
+
+# Logs (100 lines default)
+make logs HOST=remy.dalerogers.com.au TOKEN=$HEALTH_API_TOKEN LINES=200
+```
+
+---
+
 ### Files changed (already done)
 
 - `docker-compose.yml` — `cloudflared` service under `profiles: [tunnel]`
