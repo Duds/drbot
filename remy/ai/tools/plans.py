@@ -19,15 +19,18 @@ async def exec_create_plan(registry: ToolRegistry, inp: dict, user_id: int) -> s
     title = inp.get("title", "").strip()
     description = inp.get("description", "").strip() or None
     steps = inp.get("steps", [])
+    goal_id = inp.get("goal_id")
 
     if not title:
         return "Please provide a title for the plan."
     if not steps:
         return "Please provide at least one step for the plan."
 
+    goal_id_int: int | None = int(goal_id) if goal_id is not None else None
+
     try:
         plan_id = await registry._plan_store.create_plan(
-            user_id, title, description, steps
+            user_id, title, description, steps, goal_id=goal_id_int
         )
     except Exception as e:
         return f"Could not create plan: {e}"
@@ -76,14 +79,20 @@ async def exec_get_plan(registry: ToolRegistry, inp: dict, user_id: int) -> str:
         f"📋 **{plan['title']}** (ID {plan['id']})",
         f"Status: {plan['status']}",
     ]
+    if plan.get("goal_title"):
+        lines.append(f"Goal: {plan['goal_title']} (ID {plan.get('goal_id')})")
     if plan.get("description"):
         lines.append(f"Description: {plan['description']}")
-    lines.append(f"Created: {plan['created_at'][:10]} | Updated: {plan['updated_at'][:10]}")
+    lines.append(
+        f"Created: {plan['created_at'][:10]} | Updated: {plan['updated_at'][:10]}"
+    )
     lines.append("")
 
     for step in plan.get("steps", []):
         emoji = _STATUS_EMOJI.get(step["status"], "❓")
-        lines.append(f"{step['position']}. {emoji} [{step['status']}] {step['title']} (step ID {step['id']})")
+        lines.append(
+            f"{step['position']}. {emoji} [{step['status']}] {step['title']} (step ID {step['id']})"
+        )
         if step.get("notes"):
             lines.append(f"   Notes: {step['notes']}")
         for attempt in step.get("attempts", []):
@@ -135,6 +144,8 @@ async def exec_list_plans(registry: ToolRegistry, inp: dict, user_id: int) -> st
         progress = ", ".join(progress_parts) if progress_parts else "no steps"
 
         lines.append(f"**{plan['title']}** (ID {plan['id']})")
+        if plan.get("goal_title"):
+            lines.append(f"  Goal: {plan['goal_title']}")
         lines.append(f"  [{total} steps — {progress}]")
         lines.append(f"  Last activity: {plan['updated_at'][:10]}")
         lines.append("")
@@ -159,17 +170,23 @@ async def exec_update_plan_step(registry: ToolRegistry, inp: dict, user_id: int)
 
     try:
         if status:
-            updated = await registry._plan_store.update_step_status(int(step_id), status)
+            updated = await registry._plan_store.update_step_status(
+                int(step_id), status
+            )
             if updated:
                 results.append(f"Status → {status}")
             else:
                 return f"No step with ID {step_id} found."
 
         if attempt_outcome:
-            await registry._plan_store.add_attempt(int(step_id), attempt_outcome, attempt_notes)
+            await registry._plan_store.add_attempt(
+                int(step_id), attempt_outcome, attempt_notes
+            )
             results.append(f"Attempt logged: {attempt_outcome}")
             if not status:
-                await registry._plan_store.update_step_status(int(step_id), "in_progress")
+                await registry._plan_store.update_step_status(
+                    int(step_id), "in_progress"
+                )
                 results.append("Status → in_progress (auto)")
 
     except ValueError as e:
@@ -183,7 +200,9 @@ async def exec_update_plan_step(registry: ToolRegistry, inp: dict, user_id: int)
     return f"✅ Step {step_id} updated: " + "; ".join(results)
 
 
-async def exec_update_plan_status(registry: ToolRegistry, inp: dict, user_id: int) -> str:
+async def exec_update_plan_status(
+    registry: ToolRegistry, inp: dict, user_id: int
+) -> str:
     """Mark an entire plan as complete or abandoned."""
     if registry._plan_store is None:
         return "Plan tracking not available."
@@ -209,3 +228,36 @@ async def exec_update_plan_status(registry: ToolRegistry, inp: dict, user_id: in
     if status == "complete":
         return f"✅ Plan {plan_id} marked as complete. Well done! 🎉"
     return f"✅ Plan {plan_id} marked as {status}."
+
+
+async def exec_update_plan(registry: ToolRegistry, inp: dict, user_id: int) -> str:
+    """Set or clear a plan's linked goal (goal–plan hierarchy)."""
+    if registry._plan_store is None:
+        return "Plan tracking not available."
+
+    plan_id = inp.get("plan_id")
+    if plan_id is None:
+        return "Please provide plan_id. Use list_plans to find plan IDs."
+
+    goal_id = inp.get("goal_id")
+    # Allow explicit null/omit to clear the link; otherwise use integer
+    goal_id_int: int | None = None
+    if goal_id is not None:
+        try:
+            goal_id_int = int(goal_id)
+        except (TypeError, ValueError):
+            return "goal_id must be an integer or omitted to clear the link."
+
+    try:
+        updated = await registry._plan_store.update_plan_goal(
+            int(plan_id), user_id, goal_id_int
+        )
+    except Exception as e:
+        return f"Could not update plan: {e}"
+
+    if not updated:
+        return f"No plan with ID {plan_id} found."
+
+    if goal_id_int is None:
+        return f"✅ Plan {plan_id}: goal link cleared."
+    return f"✅ Plan {plan_id} linked to goal ID {goal_id_int}."

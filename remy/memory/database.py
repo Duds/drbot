@@ -297,6 +297,9 @@ _MIGRATIONS = [
     "ALTER TABLE api_calls ADD COLUMN ttft_ms INTEGER DEFAULT 0;",
     "ALTER TABLE api_calls ADD COLUMN tool_execution_ms INTEGER DEFAULT 0;",
     "ALTER TABLE api_calls ADD COLUMN streaming_ms INTEGER DEFAULT 0;",
+    # 012: Goal–plan hierarchy (US-goal-plan-hierarchy): optional plan → goal link
+    "ALTER TABLE plans ADD COLUMN goal_id INTEGER REFERENCES goals(id);",
+    "CREATE INDEX IF NOT EXISTS idx_plans_goal_id ON plans(goal_id);",
 ]
 
 # Triggers to keep FTS indices in sync with source tables

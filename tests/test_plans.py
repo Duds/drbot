@@ -165,7 +165,9 @@ async def test_multiple_attempts(plan_store):
 async def test_list_plans(plan_store):
     """Test listing plans for a user."""
     await plan_store.create_plan(user_id=123, title="Plan A", steps=["Step 1"])
-    await plan_store.create_plan(user_id=123, title="Plan B", steps=["Step 1", "Step 2"])
+    await plan_store.create_plan(
+        user_id=123, title="Plan B", steps=["Step 1", "Step 2"]
+    )
     await plan_store.create_plan(user_id=456, title="Other user plan", steps=["Step 1"])
 
     plans = await plan_store.list_plans(user_id=123, status="active")
@@ -378,3 +380,40 @@ async def test_list_plans_filter_by_status(plan_store):
 
     all_plans = await plan_store.list_plans(user_id=123, status="all")
     assert len(all_plans) == 2
+
+
+@pytest.mark.asyncio
+async def test_goal_plan_hierarchy(plan_store):
+    """Test optional plan–goal link: create with goal_id, get/list show goal, update_plan_goal clears."""
+    async with plan_store._db.get_connection() as conn:
+        await conn.execute(
+            "INSERT INTO goals (user_id, title, status) VALUES (123, 'Well-maintained home', 'active')"
+        )
+        await conn.commit()
+        cursor = await conn.execute(
+            "SELECT id FROM goals WHERE user_id=123 ORDER BY id DESC LIMIT 1"
+        )
+        row = await cursor.fetchone()
+        goal_id = row["id"]
+
+    plan_id = await plan_store.create_plan(
+        user_id=123,
+        title="Fix cupboard",
+        description="Laundry cupboard hinge",
+        steps=["Buy hinge", "Install"],
+        goal_id=goal_id,
+    )
+    plan = await plan_store.get_plan(plan_id)
+    assert plan["goal_id"] == goal_id
+    assert plan["goal_title"] == "Well-maintained home"
+
+    plans_for_goal = await plan_store.list_plans(user_id=123, goal_id=goal_id)
+    assert len(plans_for_goal) == 1
+    assert plans_for_goal[0]["title"] == "Fix cupboard"
+    assert plans_for_goal[0]["goal_title"] == "Well-maintained home"
+
+    updated = await plan_store.update_plan_goal(plan_id, 123, None)
+    assert updated is True
+    plan_after = await plan_store.get_plan(plan_id)
+    assert plan_after.get("goal_id") is None
+    assert plan_after.get("goal_title") is None

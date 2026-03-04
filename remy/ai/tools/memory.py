@@ -15,8 +15,11 @@ logger = logging.getLogger(__name__)
 async def exec_get_logs(registry: ToolRegistry, inp: dict) -> str:
     """Read remy's log file for diagnostics."""
     from ...diagnostics import (
-        get_error_summary, get_recent_logs,
-        get_session_start, get_session_start_line, _since_dt,
+        get_error_summary,
+        get_recent_logs,
+        get_session_start,
+        get_session_start_line,
+        _since_dt,
     )
 
     mode = inp.get("mode", "summary")
@@ -29,9 +32,15 @@ async def exec_get_logs(registry: ToolRegistry, inp: dict) -> str:
     since_dt_val = None
     since_line_val = None
     if since_param == "startup":
-        since_line_val = await asyncio.to_thread(get_session_start_line, registry._logs_dir)
+        since_line_val = await asyncio.to_thread(
+            get_session_start_line, registry._logs_dir
+        )
         ts = await asyncio.to_thread(get_session_start, registry._logs_dir)
-        since_label = f"session start ({ts.strftime('%Y-%m-%d %H:%M:%S')})" if ts else "session start"
+        since_label = (
+            f"session start ({ts.strftime('%Y-%m-%d %H:%M:%S')})"
+            if ts
+            else "session start"
+        )
     elif since_param in ("1h", "6h", "24h"):
         since_dt_val = _since_dt(since_param)
         since_label = f"last {since_param}"
@@ -40,7 +49,12 @@ async def exec_get_logs(registry: ToolRegistry, inp: dict) -> str:
 
     if mode == "tail":
         result = await asyncio.to_thread(
-            get_recent_logs, registry._logs_dir, lines, None, since_dt_val, since_line_val
+            get_recent_logs,
+            registry._logs_dir,
+            lines,
+            None,
+            since_dt_val,
+            since_line_val,
         )
         return f"Last {lines} log lines ({since_label}):\n\n{result}"
     elif mode == "errors":
@@ -64,6 +78,7 @@ async def exec_get_goals(registry: ToolRegistry, inp: dict, user_id: int) -> str
         if registry._goal_store is None:
             return "Goal store not available — memory system not initialised."
         limit = min(int(inp.get("limit", 10)), 50)
+        include_plans = bool(inp.get("include_plans", False))
         goals = await registry._goal_store.get_active(user_id, limit=limit)
         if not goals:
             return "No active goals found."
@@ -75,6 +90,22 @@ async def exec_get_goals(registry: ToolRegistry, inp: dict, user_id: int) -> str
             line = f"• [ID:{gid}] {title}"
             if desc:
                 line += f" — {desc}"
+            if include_plans and registry._plan_store is not None:
+                try:
+                    plans = await registry._plan_store.list_plans(
+                        user_id, status="active", goal_id=g.get("id")
+                    )
+                    if plans:
+                        parts = []
+                        for p in plans:
+                            total = p.get("total_steps", 0)
+                            done = (p.get("step_counts") or {}).get("done", 0)
+                            parts.append(
+                                f"  {p['title']} (ID {p['id']}): {done}/{total} steps"
+                            )
+                        line += "\n" + "\n".join(parts)
+                except Exception:
+                    pass
             lines.append(line)
         return f"Active goals ({len(goals)}):\n" + "\n".join(lines)
 
@@ -111,7 +142,9 @@ async def exec_get_facts(registry: ToolRegistry, inp: dict, user_id: int) -> str
     limit = min(int(inp.get("limit", 20)), 100)
 
     if registry._knowledge_store is not None:
-        facts = await registry._knowledge_store.get_by_type(user_id, "fact", limit=limit)
+        facts = await registry._knowledge_store.get_by_type(
+            user_id, "fact", limit=limit
+        )
         if category:
             facts = [f for f in facts if f.metadata.get("category") == category]
         if not facts:
@@ -211,7 +244,9 @@ async def exec_manage_memory(registry: ToolRegistry, inp: dict, user_id: int) ->
         if not content:
             return "Please provide content for the new fact."
         cat = category or "other"
-        new_id = await registry._knowledge_store.add_item(user_id, "fact", content, {"category": cat})
+        new_id = await registry._knowledge_store.add_item(
+            user_id, "fact", content, {"category": cat}
+        )
         return f"✅ Fact stored (ID {new_id}): [{cat}] {content}"
 
     elif action == "update":
@@ -220,7 +255,9 @@ async def exec_manage_memory(registry: ToolRegistry, inp: dict, user_id: int) ->
         if not content:
             return "Please provide the new content for the fact."
         metadata = {"category": category} if category else None
-        updated = await registry._knowledge_store.update(user_id, int(fact_id), content, metadata)
+        updated = await registry._knowledge_store.update(
+            user_id, int(fact_id), content, metadata
+        )
         if not updated:
             return f"No fact with ID {fact_id} found."
         cat_note = f" (category: {category})" if category else ""
@@ -253,7 +290,9 @@ async def exec_manage_goal(registry: ToolRegistry, inp: dict, user_id: int) -> s
         metadata = {"status": "active"}
         if description:
             metadata["description"] = description
-        new_id = await registry._knowledge_store.add_item(user_id, "goal", title, metadata)
+        new_id = await registry._knowledge_store.add_item(
+            user_id, "goal", title, metadata
+        )
         return f"✅ Goal added (ID {new_id}): {title}"
 
     elif action == "update":
@@ -271,7 +310,9 @@ async def exec_manage_goal(registry: ToolRegistry, inp: dict, user_id: int) -> s
         if description is not None:
             new_meta["description"] = description
 
-        updated = await registry._knowledge_store.update(user_id, int(goal_id), title, new_meta)
+        updated = await registry._knowledge_store.update(
+            user_id, int(goal_id), title, new_meta
+        )
         if not updated:
             return f"No goal with ID {goal_id} found."
 
@@ -284,7 +325,9 @@ async def exec_manage_goal(registry: ToolRegistry, inp: dict, user_id: int) -> s
 
     elif action == "complete":
         if not goal_id:
-            return "Please provide goal_id to mark complete. Call get_goals to find IDs."
+            return (
+                "Please provide goal_id to mark complete. Call get_goals to find IDs."
+            )
         items = await registry._knowledge_store.get_by_type(user_id, "goal", limit=100)
         target = next((i for i in items if i.id == int(goal_id)), None)
         if not target:
@@ -345,9 +388,13 @@ async def exec_get_memory_summary(registry: ToolRegistry, user_id: int) -> str:
         lines.append(f"  Categories: {', '.join(cat_parts)}")
 
     if oldest:
-        content = oldest["content"][:50] + "..." if len(oldest["content"]) > 50 else oldest["content"]
+        content = (
+            oldest["content"][:50] + "..."
+            if len(oldest["content"]) > 50
+            else oldest["content"]
+        )
         date_str = oldest["created_at"][:10] if oldest["created_at"] else "unknown"
-        lines.append(f"  Oldest fact: \"{content}\" ({date_str})")
+        lines.append(f'  Oldest fact: "{content}" ({date_str})')
 
     if stale > 0:
         lines.append(f"  ⚠️ Potentially stale (>90 days, not referenced): {stale} facts")
