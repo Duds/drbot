@@ -70,3 +70,58 @@ async def test_exec_relay_get_tasks_empty(temp_db_path):
     assert data.get("agent") == "remy"
     assert "pending_count" in data
     assert "tasks" in data
+
+
+@pytest.mark.asyncio
+async def test_shared_db_remy_to_cowork_delivery(temp_db_path):
+    """Single shared DB: message posted by Remy is visible to Cowork (Bug 3/4 verification)."""
+    from remy.relay.client import (
+        _ensure_db,
+        get_messages_for_remy,
+        post_message_to_cowork,
+    )
+
+    await _ensure_db(Path(temp_db_path))
+
+    content = "E2E test: Remy says hello to cowork"
+    result = await post_message_to_cowork(
+        content, from_agent="remy", to_agent="cowork", db_path=temp_db_path
+    )
+    assert result is not None
+    assert result.get("status") == "sent"
+
+    messages, unread = await get_messages_for_remy(
+        agent="cowork", unread_only=True, mark_read=False, db_path=temp_db_path
+    )
+    assert unread >= 1
+    assert any(
+        m.get("content") == content and m.get("from_agent") == "remy" for m in messages
+    )
+
+
+@pytest.mark.asyncio
+async def test_shared_db_cowork_to_remy_delivery(temp_db_path):
+    """Single shared DB: message posted by Cowork is visible to Remy (Bug 3/4 verification)."""
+    from remy.relay.client import (
+        _ensure_db,
+        get_messages_for_remy,
+        post_message_to_cowork,
+    )
+
+    await _ensure_db(Path(temp_db_path))
+
+    content = "E2E test: Cowork says hello to remy"
+    result = await post_message_to_cowork(
+        content, from_agent="cowork", to_agent="remy", db_path=temp_db_path
+    )
+    assert result is not None
+    assert result.get("status") == "sent"
+
+    messages, unread = await get_messages_for_remy(
+        agent="remy", unread_only=True, mark_read=False, db_path=temp_db_path
+    )
+    assert unread >= 1
+    assert any(
+        m.get("content") == content and m.get("from_agent") == "cowork"
+        for m in messages
+    )

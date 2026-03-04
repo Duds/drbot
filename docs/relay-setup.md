@@ -91,6 +91,14 @@ Remy’s Python client will then use this path for all relay reads/writes so it 
 
 ## 6. Verification
 
+**Automated (shared-DB behaviour):** Run relay unit tests to confirm one-DB delivery works:
+
+```bash
+make relay-verify
+```
+
+**Manual (both agents using shared backend):**
+
 1. Start the shared relay: `make relay-run` (or `make relay-up`).
 2. **Remy → cowork:** In Cursor (remy project), use the relay tools to post a message to cowork (e.g. `relay_post_message` with `to_agent="cowork"`). In Claude Desktop (cowork), call `relay_get_messages(agent="cowork")` — the message should appear.
 3. **Cowork → Remy:** In Claude Desktop, post a message to remy. In Cursor, call `relay_get_messages(agent="remy")` or use Telegram `/relay` — the message should appear.

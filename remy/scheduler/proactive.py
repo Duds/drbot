@@ -679,7 +679,6 @@ class ProactiveScheduler:
             return
 
         try:
-            from ..config import settings
             from ..relay.client import get_messages_for_remy, get_tasks_for_remy
         except ImportError:
             return

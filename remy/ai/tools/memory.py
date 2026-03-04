@@ -110,6 +110,7 @@ async def exec_get_goals(registry: ToolRegistry, inp: dict, user_id: int) -> str
         return f"Active goals ({len(goals)}):\n" + "\n".join(lines)
 
     limit = min(int(inp.get("limit", 10)), 50)
+    include_plans = bool(inp.get("include_plans", False))
     goals = await registry._knowledge_store.get_by_type(user_id, "goal", limit=limit)
 
     if not goals:
@@ -124,6 +125,22 @@ async def exec_get_goals(registry: ToolRegistry, inp: dict, user_id: int) -> str
         line = f"• [ID:{g.id}] {g.content}"
         if desc:
             line += f" — {desc}"
+        if include_plans and registry._plan_store is not None:
+            try:
+                plans = await registry._plan_store.list_plans(
+                    user_id, status="active", goal_id=g.id
+                )
+                if plans:
+                    parts = []
+                    for p in plans:
+                        total = p.get("total_steps", 0)
+                        done = (p.get("step_counts") or {}).get("done", 0)
+                        parts.append(
+                            f"  {p['title']} (ID {p['id']}): {done}/{total} steps"
+                        )
+                    line += "\n" + "\n".join(parts)
+            except Exception:
+                pass
         lines.append(line)
 
     if not lines:
