@@ -250,12 +250,16 @@ class TestProactivePipeline:
         mock_session_manager,
         mock_telegram_bot,
     ):
-        """US-calendar-quick-add: briefing with calendar context gets [Add to calendar] buttons."""
+        """US-calendar-quick-add: briefing with suggested_events gets [Add to calendar] buttons.
+
+        Pipeline attaches [Add to calendar] only for suggested_events (US-proactive-buttons-decisions-only),
+        not for context["calendar"] (existing events). So we pass suggested_events here.
+        """
         from remy.bot.pipeline import run_proactive_trigger
         from remy.ai.claude_client import TextChunk
 
         async def mock_stream(*args, **kwargs):
-            yield TextChunk(text="Good morning! You have Team standup at 10:00.")
+            yield TextChunk(text="Good morning! Sarah asked for 1:1 this week.")
 
         mock_claude_client.stream_with_tools = mock_stream
 
@@ -264,6 +268,7 @@ class TestProactivePipeline:
         mock_telegram_bot.send_message = AsyncMock(return_value=mock_sent)
         mock_telegram_bot.edit_message_reply_markup = AsyncMock()
 
+        # suggested_events = events to add (not yet on calendar); pipeline attaches buttons for these
         context = {
             "date": "2026-03-04",
             "calendar": [
@@ -272,7 +277,9 @@ class TestProactivePipeline:
                     "time": "10:00",
                     "when": "2026-03-04T10:00:00",
                 },
-                {"title": "Lunch", "time": "12:30", "when": "2026-03-04T12:30:00"},
+            ],
+            "suggested_events": [
+                {"title": "1:1 with Sarah", "when": "2026-03-05T14:00:00"},
             ],
         }
 
