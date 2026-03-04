@@ -27,6 +27,7 @@ async def exec_create_plan(registry: ToolRegistry, inp: dict, user_id: int) -> s
         return "Please provide at least one step for the plan."
 
     goal_id_int: int | None = None
+    knowledge_goal_id_int: int | None = None
     if goal_id_raw is not None:
         try:
             goal_id_int = int(goal_id_raw)
@@ -34,9 +35,27 @@ async def exec_create_plan(registry: ToolRegistry, inp: dict, user_id: int) -> s
             return (
                 "Invalid goal_id: must be an integer (use get_goals to list goal IDs)."
             )
-        if registry._goal_store is None:
+        if registry._goal_store is None and registry._knowledge_store is None:
             return "Goal linking not available; create the plan without goal_id."
-        if not await registry._goal_store.exists_for_user(user_id, goal_id_int):
+        # Prefer goals table; if not found there, try knowledge store (get_goals may return knowledge IDs)
+        if (
+            registry._goal_store is not None
+            and await registry._goal_store.exists_for_user(user_id, goal_id_int)
+        ):
+            knowledge_goal_id_int = None  # use goals table
+        elif registry._knowledge_store is not None:
+            goals_kn = await registry._knowledge_store.get_by_type(
+                user_id, "goal", limit=500
+            )
+            if any(g.id == goal_id_int for g in goals_kn):
+                goal_id_int = None
+                knowledge_goal_id_int = int(goal_id_raw)
+            else:
+                return (
+                    f"Goal {goal_id_raw} not found or does not belong to you. "
+                    "Use get_goals to list your goals and their IDs."
+                )
+        else:
             return (
                 f"Goal {goal_id_int} not found or does not belong to you. "
                 "Use get_goals to list your goals and their IDs."
@@ -44,7 +63,12 @@ async def exec_create_plan(registry: ToolRegistry, inp: dict, user_id: int) -> s
 
     try:
         plan_id = await registry._plan_store.create_plan(
-            user_id, title, description, steps, goal_id=goal_id_int
+            user_id,
+            title,
+            description,
+            steps,
+            goal_id=goal_id_int,
+            knowledge_goal_id=knowledge_goal_id_int,
         )
     except Exception as e:
         return f"Could not create plan: {e}"
@@ -80,6 +104,24 @@ async def exec_get_plan(registry: ToolRegistry, inp: dict, user_id: int) -> str:
         if plan_id:
             return f"No plan with ID {plan_id} found."
         return f"No plan matching '{title}' found."
+
+    # Resolve goal title when plan is linked via knowledge store
+    if (
+        plan.get("knowledge_goal_id")
+        and not plan.get("goal_title")
+        and registry._knowledge_store is not None
+    ):
+        try:
+            goals_kn = await registry._knowledge_store.get_by_type(
+                user_id, "goal", limit=500
+            )
+            for g in goals_kn:
+                if g.id == plan["knowledge_goal_id"]:
+                    plan["goal_title"] = g.content
+                    plan["goal_id"] = plan["knowledge_goal_id"]  # show ID in output
+                    break
+        except Exception:
+            pass
 
     _STATUS_EMOJI = {
         "pending": "⬜",
@@ -129,6 +171,24 @@ async def exec_list_plans(registry: ToolRegistry, inp: dict, user_id: int) -> st
         plans = await registry._plan_store.list_plans(user_id, status)
     except Exception as e:
         return f"Could not list plans: {e}"
+
+    # Resolve goal titles for plans linked via knowledge store
+    need_titles = [
+        p["knowledge_goal_id"]
+        for p in plans
+        if p.get("knowledge_goal_id") and not p.get("goal_title")
+    ]
+    if need_titles and registry._knowledge_store is not None:
+        try:
+            goals_kn = await registry._knowledge_store.get_by_type(
+                user_id, "goal", limit=500
+            )
+            id_to_title = {g.id: g.content for g in goals_kn}
+            for p in plans:
+                if p.get("knowledge_goal_id") and not p.get("goal_title"):
+                    p["goal_title"] = id_to_title.get(p["knowledge_goal_id"])
+        except Exception:
+            pass
 
     if not plans:
         if status == "all":
@@ -256,15 +316,41 @@ async def exec_update_plan(registry: ToolRegistry, inp: dict, user_id: int) -> s
     goal_id = inp.get("goal_id")
     # Allow explicit null/omit to clear the link; otherwise use integer
     goal_id_int: int | None = None
+    knowledge_goal_id_int: int | None = None
     if goal_id is not None:
         try:
-            goal_id_int = int(goal_id)
+            raw_int = int(goal_id)
         except (TypeError, ValueError):
             return "goal_id must be an integer or omitted to clear the link."
+        # Resolve to goals table or knowledge store (same as create_plan)
+        if (
+            registry._goal_store is not None
+            and await registry._goal_store.exists_for_user(user_id, raw_int)
+        ):
+            goal_id_int = raw_int
+        elif registry._knowledge_store is not None:
+            goals_kn = await registry._knowledge_store.get_by_type(
+                user_id, "goal", limit=500
+            )
+            if any(g.id == raw_int for g in goals_kn):
+                knowledge_goal_id_int = raw_int
+            else:
+                return (
+                    f"Goal {goal_id} not found or does not belong to you. "
+                    "Use get_goals to list your goals and their IDs."
+                )
+        else:
+            return (
+                f"Goal {goal_id} not found or does not belong to you. "
+                "Use get_goals to list your goals and their IDs."
+            )
 
     try:
         updated = await registry._plan_store.update_plan_goal(
-            int(plan_id), user_id, goal_id_int
+            int(plan_id),
+            user_id,
+            goal_id=goal_id_int,
+            knowledge_goal_id=knowledge_goal_id_int,
         )
     except Exception as e:
         return f"Could not update plan: {e}"
@@ -272,6 +358,6 @@ async def exec_update_plan(registry: ToolRegistry, inp: dict, user_id: int) -> s
     if not updated:
         return f"No plan with ID {plan_id} found."
 
-    if goal_id_int is None:
+    if goal_id_int is None and knowledge_goal_id_int is None:
         return f"✅ Plan {plan_id}: goal link cleared."
-    return f"✅ Plan {plan_id} linked to goal ID {goal_id_int}."
+    return f"✅ Plan {plan_id} linked to goal ID {goal_id}."

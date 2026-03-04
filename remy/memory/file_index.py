@@ -26,7 +26,7 @@ CHUNK_CHARS = 1500  # ~300 words, fits comfortably in context
 OVERLAP_CHARS = 200  # overlap for context continuity at boundaries
 MIN_CHUNK_CHARS = 50  # drop near-empty trailing chunks
 
-# Default extensions to index (text-based files)
+# Default extensions to index (text-based files + PDF/DOCX via extractors, US-rag-pdf-docx)
 DEFAULT_INDEX_EXTENSIONS = {
     ".md",
     ".txt",
@@ -49,6 +49,8 @@ DEFAULT_INDEX_EXTENSIONS = {
     ".cfg",
     ".conf",
     ".env.example",
+    ".pdf",
+    ".docx",
 }
 
 # Directories to skip during indexing
@@ -482,28 +484,55 @@ class FileIndexer:
         """
         Index a single file: read, chunk, embed, store.
 
+        PDF and DOCX use doc_extractors; all other files use plain UTF-8 read.
         Returns number of chunks created.
         """
+        suffix = path.suffix.lower()
+        content: str | None = None
 
-        # Read file content
-        def _read():
-            with open(path, "rb") as f:
-                content = f.read()
-            if _is_binary(content):
-                return None
-            return content.decode("utf-8", errors="replace")
+        if suffix == ".pdf":
+            from .doc_extractors import extract_text_from_pdf
+            from ..config import get_settings
 
-        try:
-            content = await asyncio.to_thread(_read)
-        except Exception as e:
-            logger.debug("Could not read %s: %s", path, e)
-            return 0
+            settings = get_settings()
+            try:
+                content = await asyncio.to_thread(
+                    extract_text_from_pdf,
+                    path,
+                    ocr_enabled=getattr(settings, "rag_pdf_ocr_enabled", True),
+                    ocr_lang=getattr(settings, "rag_ocr_lang", "eng"),
+                )
+            except Exception as e:
+                logger.warning("PDF extraction failed for %s: %s", path, e)
+                return 0
+        elif suffix == ".docx":
+            from .doc_extractors import extract_text_from_docx
 
-        if content is None:
-            logger.debug("Skipping binary file: %s", path)
-            return 0
+            try:
+                content = await asyncio.to_thread(extract_text_from_docx, path)
+            except Exception as e:
+                logger.warning("DOCX extraction failed for %s: %s", path, e)
+                return 0
+        else:
+            # Plain-text path
+            def _read():
+                with open(path, "rb") as f:
+                    raw = f.read()
+                if _is_binary(raw):
+                    return None
+                return raw.decode("utf-8", errors="replace")
 
-        if not content.strip():
+            try:
+                content = await asyncio.to_thread(_read)
+            except Exception as e:
+                logger.debug("Could not read %s: %s", path, e)
+                return 0
+
+            if content is None:
+                logger.debug("Skipping binary file: %s", path)
+                return 0
+
+        if content is None or not content.strip():
             return 0
 
         # Chunk the content

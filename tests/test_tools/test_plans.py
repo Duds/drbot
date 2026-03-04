@@ -24,6 +24,7 @@ def make_registry(**kwargs) -> MagicMock:
     registry = MagicMock()
     registry._plan_store = kwargs.get("plan_store")
     registry._goal_store = kwargs.get("goal_store")
+    registry._knowledge_store = kwargs.get("knowledge_store")  # None by default
     return registry
 
 
@@ -82,6 +83,7 @@ class TestExecCreatePlan:
             "Master the language",
             ["Read docs", "Write code", "Build project"],
             goal_id=None,
+            knowledge_goal_id=None,
         )
         assert "123" in result or "created" in result.lower() or "✅" in result
 
@@ -109,6 +111,7 @@ class TestExecCreatePlan:
             None,
             ["Buy hinge", "Install"],
             goal_id=5,
+            knowledge_goal_id=None,
         )
         assert "99" in result or "created" in result.lower()
 
@@ -118,7 +121,10 @@ class TestExecCreatePlan:
         store = AsyncMock()
         goal_store = AsyncMock()
         goal_store.exists_for_user = AsyncMock(return_value=False)
-        registry = make_registry(plan_store=store, goal_store=goal_store)
+        # No knowledge_store so we don't fall back to it; goal not found in goal_store only
+        registry = make_registry(
+            plan_store=store, goal_store=goal_store, knowledge_store=None
+        )
         result = await exec_create_plan(
             registry,
             {
@@ -431,11 +437,14 @@ class TestExecUpdatePlan:
         """Should call update_plan_goal with goal_id."""
         store = AsyncMock()
         store.update_plan_goal = AsyncMock(return_value=True)
-        registry = make_registry(plan_store=store)
+        registry = make_registry(plan_store=store, goal_store=AsyncMock())
+        registry._goal_store.exists_for_user = AsyncMock(return_value=True)
         result = await exec_update_plan(
             registry, {"plan_id": 2, "goal_id": 10}, USER_ID
         )
-        store.update_plan_goal.assert_called_once_with(2, USER_ID, 10)
+        store.update_plan_goal.assert_called_once_with(
+            2, USER_ID, goal_id=10, knowledge_goal_id=None
+        )
         assert "linked" in result.lower() or "✅" in result
 
     @pytest.mark.asyncio
@@ -445,7 +454,9 @@ class TestExecUpdatePlan:
         store.update_plan_goal = AsyncMock(return_value=True)
         registry = make_registry(plan_store=store)
         result = await exec_update_plan(registry, {"plan_id": 2}, USER_ID)
-        store.update_plan_goal.assert_called_once_with(2, USER_ID, None)
+        store.update_plan_goal.assert_called_once_with(
+            2, USER_ID, goal_id=None, knowledge_goal_id=None
+        )
         assert "cleared" in result.lower() or "✅" in result
 
     @pytest.mark.asyncio
@@ -453,7 +464,8 @@ class TestExecUpdatePlan:
         """Should return not found when plan does not exist."""
         store = AsyncMock()
         store.update_plan_goal = AsyncMock(return_value=False)
-        registry = make_registry(plan_store=store)
+        registry = make_registry(plan_store=store, goal_store=AsyncMock())
+        registry._goal_store.exists_for_user = AsyncMock(return_value=True)
         result = await exec_update_plan(
             registry, {"plan_id": 999, "goal_id": 1}, USER_ID
         )

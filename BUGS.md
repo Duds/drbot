@@ -6,6 +6,18 @@ Archived bugs 1–41 (all fixed) → [docs/archive/BUGS-archived-2026-03-04.md](
 
 ---
 
+## Bug 7: Goal-to-plan linking not working (knowledge store vs goals table ID mismatch)
+
+- **Symptom:** Linking a plan to a goal via `create_plan(goal_id=…)` or `update_plan(goal_id=…)` fails with "Goal X not found" even when that goal appears in `get_goals`. Plans never show under goals when using `get_goals(include_plans=True)`.
+- **Root cause:** Goals can come from two stores: **GoalStore** (goals table) and **KnowledgeStore** (knowledge table). When `get_goals` uses the knowledge store (default when it is configured), it returns **knowledge.id** as the goal ID. Plan linking validated and stored **goals.id** only (`plans.goal_id` FK). So IDs from `get_goals` were in a different ID space than plan linking, causing validation to reject valid goals and `include_plans` to never find plans (filtered by `goal_id` in goals table).
+- **Status:** ✅ Fixed
+- **Location:** `remy/memory/database.py`, `remy/memory/plans.py`, `remy/ai/tools/plans.py`, `remy/ai/tools/memory.py`, `remy/ai/tools/session.py`
+- **Fix:** (1) Migration 013: add `plans.knowledge_goal_id` so plans can link to goals in the knowledge store. (2) PlanStore: `create_plan` / `update_plan_goal` / `list_plans` / `get_plan` support both `goal_id` (goals table) and `knowledge_goal_id` (knowledge store). (3) Tool executors: validate `goal_id` against goal_store first, then knowledge_store; pass the appropriate id to the store. (4) `get_goals(include_plans=True)` when using knowledge store now filters plans by `knowledge_goal_id`. (5) `get_plan` / `list_plans` resolve knowledge-store goal IDs to titles for display. (6) `update_plan` added to the plans tool category in session help.
+- **Reported:** 2026-03-05
+- **Fixed:** 2026-03-05
+
+---
+
 ## Bug 2: Relay MCP tools fail with 'str' object has no attribute 'request_context'
 
 - **Symptom:** `relay_get_tasks` and `relay_get_messages` (and other relay_mcp tools) fail immediately with `AttributeError: 'str' object has no attribute 'request_context'` when called from Claude Desktop (cowork) or Cursor.

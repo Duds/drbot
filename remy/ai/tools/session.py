@@ -237,6 +237,7 @@ async def exec_help(registry: ToolRegistry, inp: dict, user_id: int) -> str:
             "list_plans",
             "update_plan_step",
             "update_plan_status",
+            "update_plan",
         ],
         "analytics": [
             "get_stats",

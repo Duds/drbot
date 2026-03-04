@@ -127,8 +127,9 @@ async def exec_get_goals(registry: ToolRegistry, inp: dict, user_id: int) -> str
             line += f" — {desc}"
         if include_plans and registry._plan_store is not None:
             try:
+                # Goals from knowledge store use knowledge.id; filter plans by knowledge_goal_id
                 plans = await registry._plan_store.list_plans(
-                    user_id, status="active", goal_id=g.id
+                    user_id, status="active", knowledge_goal_id=g.id
                 )
                 if plans:
                     parts = []

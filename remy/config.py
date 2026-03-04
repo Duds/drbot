@@ -169,6 +169,9 @@ class Settings(BaseSettings):
     file_index_chunk_chars: int = 1500
     file_index_overlap_chars: int = 200
     file_index_max_file_size: int = 512_000
+    # PDF OCR (US-rag-pdf-docx): when text extraction yields little text, run Tesseract OCR
+    rag_pdf_ocr_enabled: bool = True
+    rag_ocr_lang: str = "eng"  # Tesseract language(s), e.g. eng+fra
 
     # ── Classifier cache ────────────────────────────────────────────────────────
     classifier_cache_ttl: int = 300

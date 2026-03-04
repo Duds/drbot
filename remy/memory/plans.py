@@ -32,20 +32,25 @@ class PlanStore:
         description: str | None = None,
         steps: list[str] | None = None,
         goal_id: int | None = None,
+        knowledge_goal_id: int | None = None,
     ) -> int:
-        """Create a new plan with optional initial steps and optional goal link. Returns the plan ID."""
+        """Create a new plan with optional initial steps and optional goal link. Returns the plan ID.
+
+        goal_id links to goals.id (goals table); knowledge_goal_id links to knowledge.id (knowledge store).
+        At most one of goal_id or knowledge_goal_id should be set.
+        """
         now = datetime.now(timezone.utc).isoformat()
         async with self._db.get_connection() as conn:
             try:
                 cursor = await conn.execute(
                     """
-                    INSERT INTO plans (user_id, title, description, status, goal_id, created_at, updated_at)
-                    VALUES (?, ?, ?, 'active', ?, ?, ?)
+                    INSERT INTO plans (user_id, title, description, status, goal_id, knowledge_goal_id, created_at, updated_at)
+                    VALUES (?, ?, ?, 'active', ?, ?, ?, ?)
                     """,
-                    (user_id, title, description, goal_id, now, now),
+                    (user_id, title, description, goal_id, knowledge_goal_id, now, now),
                 )
             except aiosqlite.IntegrityError as e:
-                if "foreign key" in str(e).lower():
+                if "foreign key" in str(e).lower() and goal_id is not None:
                     raise ValueError(
                         f"Goal {goal_id} not found — it may have been deleted. "
                         "Create the plan without goal_id or link to an existing goal (use get_goals)."
@@ -209,7 +214,7 @@ class PlanStore:
         async with self._db.get_connection() as conn:
             cursor = await conn.execute(
                 """
-                SELECT p.id, p.user_id, p.title, p.description, p.status, p.goal_id,
+                SELECT p.id, p.user_id, p.title, p.description, p.status, p.goal_id, p.knowledge_goal_id,
                        p.created_at, p.updated_at, g.title AS goal_title
                 FROM plans p
                 LEFT JOIN goals g ON p.goal_id = g.id
@@ -222,8 +227,8 @@ class PlanStore:
                 return None
 
             plan = dict(plan_row)
-            # goal_title is from LEFT JOIN; None when plan has no goal_id
-            if plan.get("goal_id") is None:
+            # goal_title is from LEFT JOIN when goal_id set; when only knowledge_goal_id set, caller resolves
+            if plan.get("goal_id") is None and plan.get("knowledge_goal_id") is None:
                 plan["goal_title"] = None
 
             cursor = await conn.execute(
@@ -276,30 +281,41 @@ class PlanStore:
         user_id: int,
         status: str = "active",
         goal_id: int | None = None,
+        knowledge_goal_id: int | None = None,
     ) -> list[dict[str, Any]]:
         """List plans for a user with step progress summary and linked goal (if any).
 
         status can be: 'active', 'complete', 'abandoned', or 'all'
-        goal_id: if set, only return plans linked to this goal.
+        goal_id: if set, only return plans linked to this goal (goals table).
+        knowledge_goal_id: if set, only return plans linked to this knowledge goal (knowledge store).
         """
         async with self._db.get_connection() as conn:
+            cols = "p.id, p.title, p.description, p.status, p.goal_id, p.knowledge_goal_id, p.created_at, p.updated_at, g.title AS goal_title"
             if status == "all":
                 if goal_id is not None:
                     cursor = await conn.execute(
-                        """
-                        SELECT p.id, p.title, p.description, p.status, p.goal_id,
-                               p.created_at, p.updated_at, g.title AS goal_title
+                        f"""
+                        SELECT {cols}
                         FROM plans p
                         LEFT JOIN goals g ON p.goal_id = g.id
                         WHERE p.user_id = ? AND p.goal_id = ? ORDER BY p.updated_at DESC
                         """,
                         (user_id, goal_id),
                     )
+                elif knowledge_goal_id is not None:
+                    cursor = await conn.execute(
+                        f"""
+                        SELECT {cols}
+                        FROM plans p
+                        LEFT JOIN goals g ON p.goal_id = g.id
+                        WHERE p.user_id = ? AND p.knowledge_goal_id = ? ORDER BY p.updated_at DESC
+                        """,
+                        (user_id, knowledge_goal_id),
+                    )
                 else:
                     cursor = await conn.execute(
-                        """
-                        SELECT p.id, p.title, p.description, p.status, p.goal_id,
-                               p.created_at, p.updated_at, g.title AS goal_title
+                        f"""
+                        SELECT {cols}
                         FROM plans p
                         LEFT JOIN goals g ON p.goal_id = g.id
                         WHERE p.user_id = ? ORDER BY p.updated_at DESC
@@ -309,9 +325,8 @@ class PlanStore:
             else:
                 if goal_id is not None:
                     cursor = await conn.execute(
-                        """
-                        SELECT p.id, p.title, p.description, p.status, p.goal_id,
-                               p.created_at, p.updated_at, g.title AS goal_title
+                        f"""
+                        SELECT {cols}
                         FROM plans p
                         LEFT JOIN goals g ON p.goal_id = g.id
                         WHERE p.user_id = ? AND p.status = ? AND p.goal_id = ?
@@ -319,11 +334,21 @@ class PlanStore:
                         """,
                         (user_id, status, goal_id),
                     )
+                elif knowledge_goal_id is not None:
+                    cursor = await conn.execute(
+                        f"""
+                        SELECT {cols}
+                        FROM plans p
+                        LEFT JOIN goals g ON p.goal_id = g.id
+                        WHERE p.user_id = ? AND p.status = ? AND p.knowledge_goal_id = ?
+                        ORDER BY p.updated_at DESC
+                        """,
+                        (user_id, status, knowledge_goal_id),
+                    )
                 else:
                     cursor = await conn.execute(
-                        """
-                        SELECT p.id, p.title, p.description, p.status, p.goal_id,
-                               p.created_at, p.updated_at, g.title AS goal_title
+                        f"""
+                        SELECT {cols}
                         FROM plans p
                         LEFT JOIN goals g ON p.goal_id = g.id
                         WHERE p.user_id = ? AND p.status = ? ORDER BY p.updated_at DESC
@@ -335,7 +360,10 @@ class PlanStore:
             plans = []
             for plan_row in plan_rows:
                 plan = dict(plan_row)
-                if plan.get("goal_id") is None:
+                if (
+                    plan.get("goal_id") is None
+                    and plan.get("knowledge_goal_id") is None
+                ):
                     plan["goal_title"] = None
 
                 cursor = await conn.execute(
@@ -372,14 +400,22 @@ class PlanStore:
             return cursor.rowcount > 0
 
     async def update_plan_goal(
-        self, plan_id: int, user_id: int, goal_id: int | None
+        self,
+        plan_id: int,
+        user_id: int,
+        goal_id: int | None = None,
+        knowledge_goal_id: int | None = None,
     ) -> bool:
-        """Set or clear the plan's linked goal. Returns True if the plan was found and updated."""
+        """Set or clear the plan's linked goal. Returns True if the plan was found and updated.
+
+        Pass goal_id to link to goals table; pass knowledge_goal_id to link to knowledge store.
+        Pass both None to clear the link. At most one of goal_id or knowledge_goal_id should be set.
+        """
         now = datetime.now(timezone.utc).isoformat()
         async with self._db.get_connection() as conn:
             cursor = await conn.execute(
-                "UPDATE plans SET goal_id = ?, updated_at = ? WHERE id = ? AND user_id = ?",
-                (goal_id, now, plan_id, user_id),
+                "UPDATE plans SET goal_id = ?, knowledge_goal_id = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+                (goal_id, knowledge_goal_id, now, plan_id, user_id),
             )
             await conn.commit()
             return cursor.rowcount > 0

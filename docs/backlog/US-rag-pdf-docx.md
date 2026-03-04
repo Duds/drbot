@@ -1,6 +1,6 @@
 # User Story: Add PDF and DOCX to RAG Indexing
 
-**Status:** ⬜ Backlog  
+**Status:** ✅ Done — 2026-03-04  
 **Priority:** C (Could Have)  
 **Phase:** 2 — File & Workspace Integration (extension)
 

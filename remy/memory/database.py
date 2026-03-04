@@ -300,6 +300,9 @@ _MIGRATIONS = [
     # 012: Goal–plan hierarchy (US-goal-plan-hierarchy): optional plan → goal link
     "ALTER TABLE plans ADD COLUMN goal_id INTEGER REFERENCES goals(id);",
     "CREATE INDEX IF NOT EXISTS idx_plans_goal_id ON plans(goal_id);",
+    # 013: Support plan link to goals in knowledge store (goal-to-plan linking when get_goals uses knowledge store)
+    "ALTER TABLE plans ADD COLUMN knowledge_goal_id INTEGER;",
+    "CREATE INDEX IF NOT EXISTS idx_plans_knowledge_goal_id ON plans(knowledge_goal_id);",
 ]
 
 # Triggers to keep FTS indices in sync with source tables

@@ -412,7 +412,9 @@ async def test_goal_plan_hierarchy(plan_store):
     assert plans_for_goal[0]["title"] == "Fix cupboard"
     assert plans_for_goal[0]["goal_title"] == "Well-maintained home"
 
-    updated = await plan_store.update_plan_goal(plan_id, 123, None)
+    updated = await plan_store.update_plan_goal(
+        plan_id, 123, goal_id=None, knowledge_goal_id=None
+    )
     assert updated is True
     plan_after = await plan_store.get_plan(plan_id)
     assert plan_after.get("goal_id") is None

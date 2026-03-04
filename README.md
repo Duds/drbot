@@ -57,6 +57,11 @@ All configuration is via `.env`. Copy `.env.example` to get started.
 | `HEALTH_API_TOKEN` | — | Bearer token protecting `/logs` and `/telemetry` endpoints |
 | `CLOUDFLARE_TUNNEL_TOKEN` | — | Token for Cloudflare Tunnel (see [Remote Observability](#remote-observability)) |
 | `SOUL_MD_PATH` | — | Path to personality file (default: `config/SOUL.md`) |
+| `GDRIVE_MOUNT_PATHS` | — | Comma-separated paths to Google Drive mount to index (e.g. `~/Library/CloudStorage/GoogleDrive-<email>`) |
+| `RAG_PDF_OCR_ENABLED` | — | Set to `false` to disable OCR for image-only PDFs (default: `true`) |
+| `RAG_OCR_LANG` | — | Tesseract language(s), e.g. `eng` or `eng+fra` (default: `eng`) |
+
+**File index (PDF/DOCX):** Remy can index PDF and Word (.docx) files for search. For image-only or scanned PDFs, it uses **Tesseract OCR**. Install Tesseract on the host (e.g. `brew install tesseract` on macOS) so OCR can run; if Tesseract is not installed, text-only PDFs are still indexed.
 
 ---
 
