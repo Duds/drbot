@@ -19,18 +19,21 @@ async def exec_calendar_events(registry: ToolRegistry, inp: dict) -> str:
             "Run scripts/setup_google_auth.py to set it up."
         )
     days = min(int(inp.get("days", 7)), 30)
+    err: Exception | None = None
     try:
         events = await registry._calendar.list_events(days=days)
     except Exception as e:
-        return f"Could not fetch calendar events: {e}"
+        err = e
+    if err is not None:
+        return f"Could not fetch calendar events: {err}"
 
     if not events:
         period = "today" if days == 1 else f"the next {days} days"
         return f"No events scheduled for {period}."
 
     lines = [f"Calendar events (next {days} day{'s' if days != 1 else ''}):"]
-    for e in events:
-        lines.append(registry._calendar.format_event(e))
+    for ev in events:
+        lines.append(registry._calendar.format_event(ev))
     return "\n".join(lines)
 
 
@@ -50,12 +53,17 @@ async def exec_create_calendar_event(registry: ToolRegistry, inp: dict) -> str:
     if not title or not date or not time:
         return "Cannot create event: title, date, and time are all required."
 
+    err: Exception | None = None
     try:
-        event = await registry._calendar.create_event(title, date, time, duration, description)
+        event = await registry._calendar.create_event(
+            title, date, time, duration, description
+        )
     except ValueError as e:
-        return f"Invalid date/time: {e}"
+        err = e
+        return f"Invalid date/time: {err}"
     except Exception as e:
-        return f"Failed to create calendar event: {e}"
+        err = e
+        return f"Failed to create calendar event: {err}"
 
     link = event.get("htmlLink", "")
     return (

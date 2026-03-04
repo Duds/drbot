@@ -12,10 +12,11 @@ def mock_settings(tmp_path, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test_key")
     monkeypatch.setenv("TELEGRAM_ALLOWED_USERS_RAW", "12345")
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
-    
+
     import remy.config
+
     remy.config._settings = None
-    
+
     return tmp_path
 
 
@@ -30,6 +31,7 @@ def sample_handlers():
         "compact": AsyncMock(),
         "setmychat": AsyncMock(),
         "briefing": AsyncMock(),
+        "relay": AsyncMock(),
         "goals": AsyncMock(),
         "delete_conversation": AsyncMock(),
         "consolidate": AsyncMock(),
@@ -137,11 +139,11 @@ class TestTelegramBot:
             mock_builder.get_updates_write_timeout.return_value = mock_builder
             mock_builder.get_updates_pool_timeout.return_value = mock_builder
             mock_builder.build.return_value = mock_application
-            
+
             from remy.bot.telegram_bot import TelegramBot
-            
+
             TelegramBot(handlers=sample_handlers)
-            
+
             # Verify handlers were added
             assert mock_application.add_handler.called
             # Should have many handler registrations
@@ -156,13 +158,13 @@ class TestErrorHandler:
         """Verify transient errors are logged at WARNING level."""
         import telegram.error
         from remy.bot.telegram_bot import _error_handler
-        
+
         mock_update = MagicMock()
         mock_context = MagicMock()
         mock_context.error = telegram.error.NetworkError("Connection reset")
         mock_context.bot = MagicMock()
         mock_context.bot.send_message = AsyncMock()
-        
+
         # Should not raise
         await _error_handler(mock_update, mock_context)
 
@@ -170,23 +172,24 @@ class TestErrorHandler:
     async def test_error_handler_sends_alert_for_unexpected_errors(self, mock_settings):
         """Verify unexpected errors trigger admin alerts."""
         from remy.bot.telegram_bot import _error_handler
-        
+
         import remy.config
+
         remy.config._settings = None
-        
+
         mock_update = MagicMock()
         mock_update.effective_user = MagicMock()
         mock_update.effective_user.id = 12345
         mock_update.effective_chat = MagicMock()
         mock_update.effective_chat.id = 12345
-        
+
         mock_context = MagicMock()
         mock_context.error = ValueError("Unexpected error")
         mock_context.bot = MagicMock()
         mock_context.bot.send_message = AsyncMock()
-        
+
         await _error_handler(mock_update, mock_context)
-        
+
         # Should attempt to send alert
         mock_context.bot.send_message.assert_called()
 
@@ -211,11 +214,11 @@ class TestBotRun:
             mock_builder.get_updates_write_timeout.return_value = mock_builder
             mock_builder.get_updates_pool_timeout.return_value = mock_builder
             mock_builder.build.return_value = mock_application
-            
+
             from remy.bot.telegram_bot import TelegramBot
-            
+
             bot = TelegramBot(handlers=sample_handlers)
             bot.run()
-            
+
             # Verify run_polling was called
             mock_application.run_polling.assert_called_once()

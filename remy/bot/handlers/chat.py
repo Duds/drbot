@@ -17,7 +17,7 @@ import time
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from telegram import Update
+from telegram import InlineKeyboardMarkup, Update
 from telegram.constants import ChatAction
 from telegram.error import BadRequest
 from telegram.ext import ContextTypes
@@ -38,11 +38,12 @@ from .base import (
     _sanitize_messages_for_claude,
     apply_completion_reaction,
 )
-from .callbacks import make_suggested_actions_keyboard
+from .callbacks import make_step_limit_keyboard, make_suggested_actions_keyboard
 from ..session import SessionManager
 from ..streaming import stream_to_telegram
 from ...ai.claude_client import (
     AnthropicOverloadFallbackAvailable,
+    StepLimitReached,
     TextChunk,
     ToolResultChunk,
     ToolStatusChunk,
@@ -54,7 +55,7 @@ from ...ai.input_validator import (
     sanitize_file_path,
 )
 from ...analytics.timing import RequestTiming, PhaseTimer
-from ...config import settings
+from ...config import get_settings, settings
 from ...constants import SHOPPING_KEYWORDS, DEADLINE_KEYWORDS
 from ...diagnostics import is_diagnostics_trigger
 from ...exceptions import ServiceUnavailableError
@@ -122,6 +123,8 @@ def make_chat_handlers(
 
     async def _run_diagnostics(update: Update) -> None:
         """Run self-diagnostics: check_status + get_logs (Feature 34)."""
+        if update.message is None or update.effective_user is None:
+            return
         await update.message.chat.send_action(ChatAction.TYPING)
 
         user_id = update.effective_user.id
@@ -156,7 +159,7 @@ def make_chat_handlers(
                     ollama_client=None,
                     tool_registry=tool_registry,
                     scheduler=scheduler,
-                    settings=settings,
+                    settings=get_settings(),
                 )
                 if diagnostics_runner is not None:
                     runner = diagnostics_runner
@@ -195,6 +198,7 @@ def make_chat_handlers(
         """Tool-aware streaming path using native Anthropic function calling."""
         current_display: list[str] = []
         tool_turns: list[tuple[list[dict], list[dict]]] = []
+        step_limit_reached = False
 
         in_tool_turn = False
         last_edit_len = 0
@@ -259,6 +263,7 @@ def make_chat_handlers(
                 # Reset streaming state so a retry starts clean (Bug 13)
                 current_display = []
                 tool_turns = []
+                step_limit_reached = False
                 in_tool_turn = False
                 last_edit_len = 0
 
@@ -357,6 +362,9 @@ def make_chat_handlers(
                         current_display = []
                         last_edit_len = 0
 
+                    elif isinstance(event, StepLimitReached):
+                        step_limit_reached = True
+
                 break  # stream completed successfully
 
             except AnthropicOverloadFallbackAvailable as e:
@@ -425,37 +433,44 @@ def make_chat_handlers(
                             suggested_actions = actions
                             break
 
-        reply_markup = (
-            make_suggested_actions_keyboard(suggested_actions, user_id)
-            if suggested_actions
-            else None
-        )
+        # Step-limit keyboard takes precedence when max_iterations was hit (US-step-limit-buttons)
+        reply_markup: InlineKeyboardMarkup | None
+        if step_limit_reached:
+            reply_markup = make_step_limit_keyboard()
+        elif suggested_actions:
+            reply_markup = make_suggested_actions_keyboard(suggested_actions, user_id)
+        else:
+            reply_markup = None
 
         # US-emoji-reactions-feedback: apply 🤩 on user's message when allowlisted tool completes
         if bot is not None and tool_turns:
             await apply_completion_reaction(bot, chat_id, message_id, tool_turns)
 
-        await _flush_display(final=True, reply_markup=reply_markup)
-        # Retry once if there's text to display — the first attempt may have failed
-        # due to a transient Telegram disconnect, leaving the " …" suffix showing.
-        if "".join(current_display).strip():
-            await asyncio.sleep(0.3)
+        # Bug 35/42: When the only tool is react_to_message and there's no text,
+        # delete the status message — the emoji reaction is the complete response.
+        # Do this BEFORE _flush_display to avoid any "✓" edit (Bug 42 regression).
+        _REACTION_ONLY_TOOLS = frozenset({"react_to_message"})
+        tool_names = set()
+        for assistant_blocks, _ in tool_turns:
+            for block in assistant_blocks:
+                if isinstance(block, dict) and block.get("type") == "tool_use":
+                    tool_names.add(block.get("name"))
+        final_text_accum = "".join(current_display).strip()
+        if tool_turns and not final_text_accum and tool_names == _REACTION_ONLY_TOOLS:
+            try:
+                await sent.delete()
+            except BadRequest as e:
+                logger.debug("Could not delete react_to_message status message: %s", e)
+            except Exception as e:
+                logger.debug("Could not delete react_to_message status message: %s", e)
+        else:
             await _flush_display(final=True, reply_markup=reply_markup)
-        elif tool_turns:
-            # Claude ended with a tool call and produced no text. The message still
-            # shows "⚙️ Using tool_name…". For react_to_message alone, delete the
-            # message — the emoji reaction is the complete response (Bug 35).
-            tool_names = set()
-            for assistant_blocks, _ in tool_turns:
-                for block in assistant_blocks:
-                    if isinstance(block, dict) and block.get("type") == "tool_use":
-                        tool_names.add(block.get("name"))
-            if tool_names == {"react_to_message"}:
-                try:
-                    await sent.delete()
-                except Exception:
-                    pass
-            else:
+            # Retry once if there's text to display — the first attempt may have failed
+            # due to a transient Telegram disconnect, leaving the " …" suffix showing.
+            if final_text_accum:
+                await asyncio.sleep(0.3)
+                await _flush_display(final=True, reply_markup=reply_markup)
+            elif tool_turns:
                 try:
                     await sent.edit_text("✓", reply_markup=reply_markup)
                 except Exception:
@@ -533,6 +548,8 @@ def make_chat_handlers(
         context: ContextTypes.DEFAULT_TYPE,
     ):
         """Process text input (from message or transcribed voice) and generate response."""
+        if update.message is None or update.effective_user is None:
+            return
         if not text.strip():
             return
 
@@ -565,6 +582,8 @@ def make_chat_handlers(
         thread_id: int | None,
     ):
         """Inner implementation of text processing after concurrency check."""
+        if update.message is None or update.effective_user is None:
+            return
         allowed, rate_limit_reason = _rate_limiter.is_allowed(user_id)
         if not allowed:
             await update.message.reply_text(f"⏱️ {rate_limit_reason}")
@@ -822,6 +841,8 @@ def make_chat_handlers(
                 )
 
     async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if update.message is None or update.effective_user is None:
+            return
         if await reject_unauthorized(update):
             return
 
@@ -849,6 +870,8 @@ def make_chat_handlers(
 
     async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Transcribe voice messages and process as text."""
+        if update.message is None or update.effective_user is None:
+            return
         if await reject_unauthorized(update):
             return
 
@@ -859,6 +882,9 @@ def make_chat_handlers(
             return
 
         await update.message.chat.send_action(ChatAction.TYPING)
+        if update.message.voice is None:
+            await update.message.reply_text("[No voice in message]")
+            return
         voice_file = await update.message.voice.get_file()
 
         transcript = await voice_transcriber.transcribe(voice_file)
@@ -873,6 +899,8 @@ def make_chat_handlers(
 
     async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Process photo messages — download, encode to base64, analyse with Claude vision."""
+        if update.message is None or update.effective_user is None:
+            return
         if await reject_unauthorized(update):
             return
 
@@ -1002,6 +1030,8 @@ def make_chat_handlers(
 
     async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Process document messages — handle images sent as files (uncompressed)."""
+        if update.message is None or update.effective_user is None:
+            return
         if await reject_unauthorized(update):
             return
 

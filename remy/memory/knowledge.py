@@ -13,7 +13,7 @@ creating new rows (US-improved-persistent-memory).
 import json
 import logging
 import os
-from typing import Any, Optional
+from typing import Any, Literal, Optional, cast
 
 from ..ai.claude_client import ClaudeClient
 from ..config import settings
@@ -24,10 +24,22 @@ from .embeddings import EmbeddingStore
 logger = logging.getLogger(__name__)
 
 # Valid fact categories for the expanded taxonomy
-FACT_CATEGORIES = frozenset([
-    "name", "location", "occupation", "health", "medical", "finance",
-    "hobby", "relationship", "preference", "deadline", "project", "other"
-])
+FACT_CATEGORIES = frozenset(
+    [
+        "name",
+        "location",
+        "occupation",
+        "health",
+        "medical",
+        "finance",
+        "hobby",
+        "relationship",
+        "preference",
+        "deadline",
+        "project",
+        "other",
+    ]
+)
 
 _EXTRACTION_SYSTEM = """You extract structured knowledge items from user messages.
 Return ONLY a JSON array of objects, each with "entity_type", "content", "metadata", and "confidence".
@@ -67,6 +79,7 @@ Example: [{"entity_type": "fact", "content": "Lives in Sydney", "metadata": {"ca
 
 _EXTRACTION_PROMPT = 'Extract knowledge items from this message:\n\n"""{message}"""'
 
+
 class KnowledgeExtractor:
     """Uses Claude Haiku to extract unified knowledge items from user messages."""
 
@@ -77,7 +90,7 @@ class KnowledgeExtractor:
         """Extract facts, goals, or shopping items. Returns empty list on failure."""
         if len(message.strip()) < 5:
             return []
-        
+
         try:
             raw = await self._claude.complete(
                 messages=[
@@ -90,15 +103,15 @@ class KnowledgeExtractor:
                 model=settings.model_simple,
                 max_tokens=1000,
             )
-            
+
             cleaned = raw.strip()
             if cleaned.startswith("```"):
                 cleaned = cleaned.split("\n", 1)[-1].rsplit("```", 1)[0]
-            
+
             data = json.loads(cleaned.strip())
             if not isinstance(data, list):
                 return []
-            
+
             items = []
             for d in data:
                 if isinstance(d, dict) and "entity_type" in d and "content" in d:
@@ -107,7 +120,7 @@ class KnowledgeExtractor:
                             entity_type=d["entity_type"],
                             content=str(d["content"])[:500],
                             metadata=d.get("metadata", {}),
-                            confidence=d.get("confidence", 1.0)
+                            confidence=d.get("confidence", 1.0),
                         )
                     )
             return items
@@ -115,9 +128,10 @@ class KnowledgeExtractor:
             logger.debug("Knowledge extraction failed: %s", e)
             return []
 
+
 class KnowledgeStore:
     """Persists and retrieves knowledge items in a unified SQLite table.
-    
+
     Includes semantic deduplication: when a new fact is extracted, it's compared
     to existing facts using ANN cosine distance. If a near-duplicate exists
     (distance < fact_merge_threshold), the existing fact is superseded rather
@@ -132,59 +146,61 @@ class KnowledgeStore:
         self, user_id: int, items: list[KnowledgeItem], session_key: str = ""
     ) -> None:
         """Insert new knowledge items with semantic deduplication.
-        
+
         For facts, performs ANN similarity check within the same category.
         If a semantically similar fact exists (distance < threshold), the
         existing fact is updated (superseded) rather than inserting a new row.
         """
         if not items:
             return
-        
+
         for item in items:
             # Fast path: exact string match
             async with self._db.get_connection() as conn:
                 existing = await conn.execute_fetchall(
                     "SELECT id FROM knowledge WHERE user_id=? AND entity_type=? AND LOWER(content)=LOWER(?)",
-                    (user_id, item.entity_type, item.content)
+                    (user_id, item.entity_type, item.content),
                 )
                 if existing:
                     continue
-            
+
             # Semantic deduplication for facts only
             if item.entity_type == "fact":
                 category = item.metadata.get("category", "other")
                 source_type = "knowledge_fact"
-                
+
                 similar = await self._embeddings.search_similar_for_type(
                     user_id, item.content, source_type=source_type, limit=5
                 )
-                
+
                 # Filter to same category and check threshold
                 merged = False
                 for match in similar:
                     if match.get("distance", 1.0) >= settings.fact_merge_threshold:
                         continue
-                    
+
                     # Fetch the matched item to check category
                     match_id = match.get("source_id")
                     if not match_id:
                         continue
-                    
+
                     async with self._db.get_connection() as conn:
-                        row = await conn.execute_fetchall(
-                            "SELECT id, metadata FROM knowledge WHERE id=? AND user_id=?",
-                            (match_id, user_id)
+                        rows = list(
+                            await conn.execute_fetchall(
+                                "SELECT id, metadata FROM knowledge WHERE id=? AND user_id=?",
+                                (match_id, user_id),
+                            )
                         )
-                        if not row:
+                        if not rows:
                             continue
-                        
-                        match_meta = json.loads(row[0]["metadata"])
+                        row = rows[0]
+                        match_meta = json.loads(row["metadata"])
                         match_category = match_meta.get("category", "other")
-                        
+
                         # Only merge within same category
                         if match_category != category:
                             continue
-                        
+
                         # Supersede: update the existing fact
                         old_content = match.get("content_text", "")
                         await self._supersede(
@@ -192,14 +208,16 @@ class KnowledgeStore:
                         )
                         logger.debug(
                             "Merged fact (d=%.3f): %r → %r",
-                            match["distance"], old_content, item.content
+                            match["distance"],
+                            old_content,
+                            item.content,
                         )
                         merged = True
                         break
-                
+
                 if merged:
                     continue
-            
+
             await self._insert(user_id, item, session_key=session_key)
 
     async def _supersede(
@@ -219,10 +237,16 @@ class KnowledgeStore:
                     source_session=COALESCE(?, source_session)
                 WHERE id=? AND user_id=?
                 """,
-                (new_content, json.dumps(new_metadata), session_key or None, item_id, user_id),
+                (
+                    new_content,
+                    json.dumps(new_metadata),
+                    session_key or None,
+                    item_id,
+                    user_id,
+                ),
             )
             await conn.commit()
-        
+
         # Re-embed with new content
         try:
             emb_id = await self._embeddings.upsert_embedding(
@@ -237,7 +261,9 @@ class KnowledgeStore:
         except Exception as e:
             logger.warning("Could not re-embed superseded item %d: %s", item_id, e)
 
-    async def _insert(self, user_id: int, item: KnowledgeItem, session_key: str = "") -> int:
+    async def _insert(
+        self, user_id: int, item: KnowledgeItem, session_key: str = ""
+    ) -> int:
         async with self._db.get_connection() as conn:
             cursor = await conn.execute(
                 """
@@ -245,10 +271,19 @@ class KnowledgeStore:
                                        last_referenced_at, source_session)
                 VALUES (?, ?, ?, ?, ?, datetime('now'), ?)
                 """,
-                (user_id, item.entity_type, item.content, json.dumps(item.metadata),
-                 item.confidence, session_key or None),
+                (
+                    user_id,
+                    item.entity_type,
+                    item.content,
+                    json.dumps(item.metadata),
+                    item.confidence,
+                    session_key or None,
+                ),
             )
-            item_id = cursor.lastrowid
+            item_id_raw = cursor.lastrowid
+            if item_id_raw is None:
+                raise RuntimeError("INSERT into knowledge did not return lastrowid")
+            item_id = item_id_raw
             await conn.commit()
 
         # Update embedding
@@ -264,29 +299,37 @@ class KnowledgeStore:
                 await conn.commit()
         except Exception as e:
             logger.warning("Could not embed knowledge item %d: %s", item_id, e)
-        
+
         return item_id
 
-    async def add_item(self, user_id: int, entity_type: str, content: str, metadata: dict | None = None) -> int:
+    async def add_item(
+        self, user_id: int, entity_type: str, content: str, metadata: dict | None = None
+    ) -> int:
         """Manually insert an item bypassing extraction. Returns the new item ID."""
         item = KnowledgeItem(
-            entity_type=entity_type,
+            entity_type=cast("Literal['fact', 'goal', 'shopping_item']", entity_type),
             content=content,
             metadata=metadata or {},
-            confidence=1.0  # Assumed explicitly true since user asked to store it.
+            confidence=1.0,  # Assumed explicitly true since user asked to store it.
         )
         await self.upsert(user_id, [item])
 
         # Retrieve the ID of what was just inserted
         async with self._db.get_connection() as conn:
-            row = await conn.execute_fetchall(
-                "SELECT id FROM knowledge WHERE user_id=? AND entity_type=? AND content=? ORDER BY id DESC LIMIT 1",
-                (user_id, entity_type, content),
+            rows = list(
+                await conn.execute_fetchall(
+                    "SELECT id FROM knowledge WHERE user_id=? AND entity_type=? AND content=? ORDER BY id DESC LIMIT 1",
+                    (user_id, entity_type, content),
+                )
             )
-            return row[0]["id"] if row else 0
+            return int(rows[0]["id"]) if rows else 0
 
     async def get_by_type(
-        self, user_id: int, entity_type: str, limit: int = 50, min_confidence: float = 0.5
+        self,
+        user_id: int,
+        entity_type: str,
+        limit: int = 50,
+        min_confidence: float = 0.5,
     ) -> list[KnowledgeItem]:
         """Fetch items of a specific type for the user, filtered by minimum confidence."""
         async with self._db.get_connection() as conn:
@@ -305,13 +348,14 @@ class KnowledgeStore:
                     entity_type=row["entity_type"],
                     content=row["content"],
                     metadata=json.loads(row["metadata"]),
-                    confidence=row["confidence"]
-                ) for row in rows
+                    confidence=row["confidence"],
+                )
+                for row in rows
             ]
 
     async def get_memory_summary(self, user_id: int) -> dict[str, Any]:
         """Return a structured overview of stored memory for a user.
-        
+
         Returns:
             dict with keys: total_facts, total_goals, recent_facts_7d,
             categories (dict of category -> count), oldest_fact,
@@ -319,59 +363,75 @@ class KnowledgeStore:
         """
         async with self._db.get_connection() as conn:
             # Total counts
-            fact_count = await conn.execute_fetchall(
-                "SELECT COUNT(*) as cnt FROM knowledge WHERE user_id=? AND entity_type='fact'",
-                (user_id,)
+            fact_count = list(
+                await conn.execute_fetchall(
+                    "SELECT COUNT(*) as cnt FROM knowledge WHERE user_id=? AND entity_type='fact'",
+                    (user_id,),
+                )
             )
-            goal_count = await conn.execute_fetchall(
-                "SELECT COUNT(*) as cnt FROM knowledge WHERE user_id=? AND entity_type='goal'",
-                (user_id,)
+            goal_count = list(
+                await conn.execute_fetchall(
+                    "SELECT COUNT(*) as cnt FROM knowledge WHERE user_id=? AND entity_type='goal'",
+                    (user_id,),
+                )
             )
-            
+
             # Recent facts (last 7 days)
-            recent = await conn.execute_fetchall(
-                """SELECT COUNT(*) as cnt FROM knowledge 
+            recent = list(
+                await conn.execute_fetchall(
+                    """SELECT COUNT(*) as cnt FROM knowledge 
                    WHERE user_id=? AND entity_type='fact' 
                    AND created_at >= datetime('now', '-7 days')""",
-                (user_id,)
+                    (user_id,),
+                )
             )
-            
+
             # Category breakdown
-            cat_rows = await conn.execute_fetchall(
-                """SELECT json_extract(metadata, '$.category') as cat, COUNT(*) as cnt
+            cat_rows = list(
+                await conn.execute_fetchall(
+                    """SELECT json_extract(metadata, '$.category') as cat, COUNT(*) as cnt
                    FROM knowledge WHERE user_id=? AND entity_type='fact'
                    GROUP BY cat ORDER BY cnt DESC""",
-                (user_id,)
+                    (user_id,),
+                )
             )
-            categories = {row["cat"] or "other": row["cnt"] for row in cat_rows}
-            
+            categories = {
+                str(row["cat"] or "other"): int(row["cnt"]) for row in cat_rows
+            }
+
             # Oldest fact
-            oldest = await conn.execute_fetchall(
-                """SELECT content, created_at FROM knowledge 
+            oldest = list(
+                await conn.execute_fetchall(
+                    """SELECT content, created_at FROM knowledge 
                    WHERE user_id=? AND entity_type='fact'
                    ORDER BY created_at ASC LIMIT 1""",
-                (user_id,)
+                    (user_id,),
+                )
             )
-            
+
             # Potentially stale (not referenced in 90+ days)
-            stale = await conn.execute_fetchall(
-                """SELECT COUNT(*) as cnt FROM knowledge 
+            stale = list(
+                await conn.execute_fetchall(
+                    """SELECT COUNT(*) as cnt FROM knowledge 
                    WHERE user_id=? AND entity_type='fact'
                    AND (last_referenced_at IS NULL 
                         OR last_referenced_at < datetime('now', '-90 days'))""",
-                (user_id,)
+                    (user_id,),
+                )
             )
-            
+
         return {
-            "total_facts": fact_count[0]["cnt"] if fact_count else 0,
-            "total_goals": goal_count[0]["cnt"] if goal_count else 0,
-            "recent_facts_7d": recent[0]["cnt"] if recent else 0,
+            "total_facts": int(fact_count[0]["cnt"]) if fact_count else 0,
+            "total_goals": int(goal_count[0]["cnt"]) if goal_count else 0,
+            "recent_facts_7d": int(recent[0]["cnt"]) if recent else 0,
             "categories": categories,
             "oldest_fact": {
                 "content": oldest[0]["content"],
-                "created_at": oldest[0]["created_at"]
-            } if oldest else None,
-            "potentially_stale": stale[0]["cnt"] if stale else 0,
+                "created_at": oldest[0]["created_at"],
+            }
+            if oldest
+            else None,
+            "potentially_stale": int(stale[0]["cnt"]) if stale else 0,
         }
 
     async def update_last_referenced(self, user_id: int, item_ids: list[int]) -> None:
@@ -387,27 +447,34 @@ class KnowledgeStore:
             )
             await conn.commit()
 
-    async def update(self, user_id: int, item_id: int, content: Optional[str] = None, metadata: Optional[dict] = None) -> bool:
+    async def update(
+        self,
+        user_id: int,
+        item_id: int,
+        content: Optional[str] = None,
+        metadata: Optional[dict] = None,
+    ) -> bool:
         """Update an existing knowledge item."""
-        updates = []
-        params = []
+        updates: list[str] = []
+        params: list[Any] = []
         if content:
             updates.append("content=?")
             params.append(content)
         if metadata:
             updates.append("metadata=?")
             params.append(json.dumps(metadata))
-        
+
         if not updates:
             return False
-        
+
         params.extend([item_id, user_id])
         sql = f"UPDATE knowledge SET {', '.join(updates)}, updated_at=datetime('now') WHERE id=? AND user_id=?"
-        
+
         async with self._db.get_connection() as conn:
             cursor = await conn.execute(sql, tuple(params))
             await conn.commit()
-            return cursor.rowcount > 0
+            rc = cursor.rowcount
+            return rc is not None and rc > 0
 
     async def delete(self, user_id: int, item_id: int) -> bool:
         """Delete a knowledge item."""
@@ -417,34 +484,56 @@ class KnowledgeStore:
                 (item_id, user_id),
             )
             await conn.commit()
-            return cursor.rowcount > 0
+            rc = cursor.rowcount
+            return rc is not None and rc > 0
 
-    async def migrate_legacy_data(self, user_id: int, grocery_file: Optional[str] = None) -> dict[str, int]:
+    async def migrate_legacy_data(
+        self, user_id: int, grocery_file: Optional[str] = None
+    ) -> dict[str, int]:
         """One-time migration from facts, goals, and grocery text file."""
         stats = {"facts": 0, "goals": 0, "groceries": 0}
-        
+
         async with self._db.get_connection() as conn:
             # 1. Migrate Facts
-            fact_rows = await conn.execute_fetchall("SELECT category, content, confidence FROM facts WHERE user_id=?", (user_id,))
+            fact_rows = await conn.execute_fetchall(
+                "SELECT category, content, confidence FROM facts WHERE user_id=?",
+                (user_id,),
+            )
             for row in fact_rows:
-                await self.upsert(user_id, [KnowledgeItem(
-                    entity_type="fact",
-                    content=row["content"],
-                    metadata={"category": row["category"]},
-                    confidence=row["confidence"]
-                )])
+                await self.upsert(
+                    user_id,
+                    [
+                        KnowledgeItem(
+                            entity_type="fact",
+                            content=row["content"],
+                            metadata={"category": row["category"]},
+                            confidence=row["confidence"],
+                        )
+                    ],
+                )
                 stats["facts"] += 1
-            
+
             # 2. Migrate Goals
-            goal_rows = await conn.execute_fetchall("SELECT title, description, status FROM goals WHERE user_id=?", (user_id,))
+            goal_rows = await conn.execute_fetchall(
+                "SELECT title, description, status FROM goals WHERE user_id=?",
+                (user_id,),
+            )
             for row in goal_rows:
-                await self.upsert(user_id, [KnowledgeItem(
-                    entity_type="goal",
-                    content=row["title"],
-                    metadata={"description": row["description"], "status": row["status"]}
-                )])
+                await self.upsert(
+                    user_id,
+                    [
+                        KnowledgeItem(
+                            entity_type="goal",
+                            content=row["title"],
+                            metadata={
+                                "description": row["description"],
+                                "status": row["status"],
+                            },
+                        )
+                    ],
+                )
                 stats["goals"] += 1
-                
+
         # 3. Migrate Groceries
         if grocery_file and os.path.exists(grocery_file):
             try:
@@ -452,15 +541,20 @@ class KnowledgeStore:
                     for line in f:
                         item = line.strip().strip("- ").strip()
                         if item:
-                            await self.upsert(user_id, [KnowledgeItem(
-                                entity_type="shopping_item",
-                                content=item
-                            )])
+                            await self.upsert(
+                                user_id,
+                                [
+                                    KnowledgeItem(
+                                        entity_type="shopping_item", content=item
+                                    )
+                                ],
+                            )
                             stats["groceries"] += 1
             except Exception as e:
                 logger.warning("Could not migrate grocery file: %s", e)
-                
+
         return stats
+
 
 async def extract_and_store_knowledge(
     user_id: int,

@@ -235,6 +235,43 @@ CREATE TABLE IF NOT EXISTS outbound_queue (
 );
 CREATE INDEX IF NOT EXISTS idx_outbound_queue_status ON outbound_queue(status);
 CREATE INDEX IF NOT EXISTS idx_outbound_queue_created ON outbound_queue(created_at);
+
+-- Relay (US-claude-desktop-relay): schema matches relay_mcp for shared DB
+CREATE TABLE IF NOT EXISTS messages (
+    id          TEXT PRIMARY KEY,
+    from_agent  TEXT NOT NULL,
+    to_agent    TEXT NOT NULL,
+    content     TEXT NOT NULL,
+    thread_id   TEXT,
+    read        INTEGER NOT NULL DEFAULT 0,
+    created_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_messages_to ON messages(to_agent, read);
+
+CREATE TABLE IF NOT EXISTS tasks (
+    id          TEXT PRIMARY KEY,
+    from_agent  TEXT NOT NULL,
+    to_agent    TEXT NOT NULL,
+    task_type   TEXT NOT NULL,
+    description TEXT NOT NULL,
+    params      TEXT NOT NULL DEFAULT '{}',
+    status      TEXT NOT NULL DEFAULT 'pending',
+    result      TEXT,
+    notes       TEXT,
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_tasks_to ON tasks(to_agent, status);
+CREATE INDEX IF NOT EXISTS idx_tasks_from ON tasks(from_agent);
+
+CREATE TABLE IF NOT EXISTS shared_notes (
+    id          TEXT PRIMARY KEY,
+    from_agent  TEXT NOT NULL,
+    content     TEXT NOT NULL,
+    tags        TEXT NOT NULL DEFAULT '[]',
+    created_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_notes_tags ON shared_notes(tags);
 """
 
 
@@ -335,13 +372,18 @@ class DatabaseManager:
         # Try loading sqlite-vec for ANN search
         try:
             import sqlite_vec
+
             await self._conn.enable_load_extension(True)
-            await self._conn.execute("SELECT load_extension(?)", (sqlite_vec.loadable_path(),))
+            await self._conn.execute(
+                "SELECT load_extension(?)", (sqlite_vec.loadable_path(),)
+            )
             await self._conn.enable_load_extension(False)
             SQLITE_VEC_AVAILABLE = True
             logger.info("sqlite-vec loaded — ANN vector search enabled")
         except Exception as e:
-            logger.warning("sqlite-vec unavailable (%s) — falling back to FTS5 search", e)
+            logger.warning(
+                "sqlite-vec unavailable (%s) — falling back to FTS5 search", e
+            )
             SQLITE_VEC_AVAILABLE = False
 
         # Run schema DDL
@@ -417,7 +459,7 @@ class DatabaseManager:
     async def cleanup_old_api_calls(self, days: int = 90) -> int:
         """
         Delete api_calls records older than the specified number of days.
-        
+
         Returns the number of rows deleted. This helps prevent unbounded
         database growth from telemetry data.
         """
@@ -432,13 +474,15 @@ class DatabaseManager:
             deleted = cursor.rowcount
             await conn.commit()
             if deleted > 0:
-                logger.info("Cleaned up %d api_calls records older than %d days", deleted, days)
+                logger.info(
+                    "Cleaned up %d api_calls records older than %d days", deleted, days
+                )
             return deleted
 
     async def cleanup_old_background_jobs(self, days: int = 30) -> int:
         """
         Delete completed background_jobs records older than the specified number of days.
-        
+
         Only deletes jobs with status 'completed' or 'failed' to preserve
         in-progress work. Returns the number of rows deleted.
         """
@@ -454,13 +498,17 @@ class DatabaseManager:
             deleted = cursor.rowcount
             await conn.commit()
             if deleted > 0:
-                logger.info("Cleaned up %d background_jobs records older than %d days", deleted, days)
+                logger.info(
+                    "Cleaned up %d background_jobs records older than %d days",
+                    deleted,
+                    days,
+                )
             return deleted
 
     async def run_retention_cleanup(self) -> dict[str, int]:
         """
         Run all retention cleanup tasks.
-        
+
         Returns a dict with the number of rows deleted from each table.
         Should be called periodically (e.g., daily from scheduler or startup).
         """

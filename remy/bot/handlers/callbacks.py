@@ -190,6 +190,22 @@ def make_suggested_actions_keyboard(
     return InlineKeyboardMarkup([buttons[:4]])
 
 
+def make_step_limit_keyboard() -> InlineKeyboardMarkup:
+    """
+    Inline keyboard for step-limit message: [Continue] [Break down] [Stop].
+    Used when stream_with_tools hits max_iterations (US-step-limit-buttons).
+    """
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("Continue", callback_data="step_limit_continue"),
+                InlineKeyboardButton("Break down", callback_data="step_limit_break"),
+                InlineKeyboardButton("Stop", callback_data="step_limit_stop"),
+            ],
+        ]
+    )
+
+
 def make_callback_handler(
     *,
     google_gmail: "GmailClient | None" = None,
@@ -215,10 +231,10 @@ def make_callback_handler(
         update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         query = update.callback_query
-        if query is None:
+        if query is None or update.effective_user is None:
             return
 
-        user_id = update.effective_user.id if update.effective_user else None
+        user_id = update.effective_user.id
         if user_id is None or not is_allowed(user_id):
             await query.answer()
             return
@@ -236,8 +252,8 @@ def make_callback_handler(
                 )
                 try:
                     await query.edit_message_text("Expired. Please try again.")
-                except Exception as e:
-                    logger.debug("Edit message failed: %s", e)
+                except Exception as exc:
+                    logger.debug("Edit message failed: %s", exc)
                 return
 
             if pending["user_id"] != user_id:
@@ -249,17 +265,17 @@ def make_callback_handler(
                     await query.edit_message_text(
                         "❌ Gmail not configured or no emails to archive."
                     )
-                except Exception as e:
-                    logger.debug("Edit message failed: %s", e)
+                except Exception as exc:
+                    logger.debug("Edit message failed: %s", exc)
                 return
 
             try:
                 n = await google_gmail.archive_messages(message_ids)
                 await query.edit_message_text(f"✅ Archived {n} email(s).")
-            except Exception as e:
-                logger.exception("Archive failed: %s", e)
+            except Exception as exc:
+                logger.exception("Archive failed: %s", exc)
                 try:
-                    await query.edit_message_text(f"❌ Archive failed: {e}")
+                    await query.edit_message_text(f"❌ Archive failed: {exc}")
                 except Exception as edit_err:
                     logger.debug("Edit message failed: %s", edit_err)
 
@@ -276,6 +292,29 @@ def make_callback_handler(
                 await query.edit_message_reply_markup(reply_markup=None)
             except Exception as e:
                 logger.debug("Edit reply_markup failed: %s", e)
+
+        elif data == "step_limit_continue":
+            try:
+                await query.edit_message_reply_markup(reply_markup=None)
+                await query.answer('Send "continue" to pick up where I left off.')
+            except Exception as e:
+                logger.debug("Step limit continue edit failed: %s", e)
+
+        elif data == "step_limit_break":
+            try:
+                await query.edit_message_reply_markup(reply_markup=None)
+                await query.answer(
+                    'Send "break this into smaller tasks" or use /breakdown.'
+                )
+            except Exception as e:
+                logger.debug("Step limit break edit failed: %s", e)
+
+        elif data == "step_limit_stop":
+            try:
+                await query.edit_message_reply_markup(reply_markup=None)
+                await query.answer()
+            except Exception as e:
+                logger.debug("Step limit stop edit failed: %s", e)
 
         elif data.startswith("add_to_calendar_"):
             token = data[len("add_to_calendar_") :]
@@ -335,7 +374,7 @@ def make_callback_handler(
                     from ...relay import post_message_to_cowork
 
                     ok = await post_message_to_cowork(content=text)
-                if ok:
+                if ok is not None and ok:
                     try:
                         await query.edit_message_text("✅ Sent to cowork.")
                     except Exception:
@@ -510,7 +549,7 @@ def make_callback_handler(
             if automation.get("user_id") != user_id:
                 return
             label = automation.get("label") or "Reminder"
-            chat_id = query.message.chat_id if query.message else None
+            chat_id = getattr(query.message, "chat_id", None) if query.message else None
             if chat_id is None:
                 return
             try:

@@ -11,6 +11,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from telegram import Update
+from telegram.constants import ChatAction
 from telegram.ext import ContextTypes
 
 from .base import reject_unauthorized
@@ -37,12 +38,14 @@ def make_memory_handlers(
 ):
     """
     Factory that returns memory and goal handlers.
-    
+
     Returns a dict of command_name -> handler_function.
     """
 
     async def goals_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """List your currently active goals."""
+        if update.message is None or update.effective_user is None:
+            return
         if await reject_unauthorized(update):
             return
         if goal_store is None:
@@ -55,8 +58,11 @@ def make_memory_handlers(
                 "You have no active goals yet. Tell me what you're working on!"
             )
             return
-        lines = [f"• *{g['title']}*" + (f" — {g['description']}" if g.get("description") else "")
-                 for g in goals]
+        lines = [
+            f"• *{g['title']}*"
+            + (f" — {g['description']}" if g.get("description") else "")
+            for g in goals
+        ]
         await update.message.reply_text(
             f"🎯 *Active goals* ({len(goals)}):\n\n" + "\n".join(lines),
             parse_mode="Markdown",
@@ -64,6 +70,8 @@ def make_memory_handlers(
 
     async def plans_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """List your active plans with step progress."""
+        if update.message is None or update.effective_user is None:
+            return
         if await reject_unauthorized(update):
             return
         if plan_store is None:
@@ -72,8 +80,8 @@ def make_memory_handlers(
         user_id = update.effective_user.id
         try:
             plans = await plan_store.list_plans(user_id, status="active")
-        except Exception as e:
-            await update.message.reply_text(f"Could not load plans: {e}")
+        except Exception as exc:
+            await update.message.reply_text(f"Could not load plans: {exc}")
             return
 
         if not plans:
@@ -111,11 +119,16 @@ def make_memory_handlers(
 
         await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
-    async def delete_conversation_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def delete_conversation_command(
+        update: Update, context: ContextTypes.DEFAULT_TYPE
+    ):
         """Delete conversation history for privacy."""
+        if update.message is None or update.effective_user is None:
+            return
         if await reject_unauthorized(update):
             return
         from .base import _task_start_times
+
         user_id = update.effective_user.id
         thread_id: int | None = getattr(update.message, "message_thread_id", None)
         session_key = SessionManager.get_session_key(user_id, thread_id)
@@ -125,12 +138,14 @@ def make_memory_handlers(
             await update.message.reply_text(
                 "Conversation deleted. Starting fresh — new session begins now."
             )
-        except Exception as e:
-            logger.error("Failed to delete conversation for user %d: %s", user_id, e)
-            await update.message.reply_text(f"Could not delete conversation: {e}")
+        except Exception as exc:
+            logger.error("Failed to delete conversation for user %d: %s", user_id, exc)
+            await update.message.reply_text(f"Could not delete conversation: {exc}")
 
     async def compact_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Summarise and compress conversation history."""
+        if update.message is None or update.effective_user is None:
+            return
         if await reject_unauthorized(update):
             return
         user_id = update.effective_user.id
@@ -147,9 +162,7 @@ def make_memory_handlers(
             return
 
         await update.message.reply_text("Summarising conversation…")
-        transcript = "\n".join(
-            f"{t.role.upper()}: {t.content[:500]}" for t in turns
-        )
+        transcript = "\n".join(f"{t.role.upper()}: {t.content[:500]}" for t in turns)
         summary = await claude_client.complete(
             messages=[
                 {
@@ -168,6 +181,8 @@ def make_memory_handlers(
 
     async def consolidate_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """/consolidate — trigger end-of-day memory consolidation manually."""
+        if update.message is None or update.effective_user is None:
+            return
         if await reject_unauthorized(update):
             return
 
@@ -209,11 +224,17 @@ def make_memory_handlers(
             lines.append("\nUse /facts or /goals to review what was stored.")
             return "\n".join(lines)
 
-        job_id = await job_store.create(user_id, "consolidate", "") if job_store else None
+        job_id = (
+            await job_store.create(user_id, "consolidate", "") if job_store else None
+        )
         runner = BackgroundTaskRunner(
-            context.bot, update.message.chat_id,
-            job_store=job_store, job_id=job_id,
+            context.bot,
+            update.message.chat_id,
+            job_store=job_store,
+            job_id=job_id,
             working_message=wm,
+            thread_id=thread_id,
+            chat_action=ChatAction.UPLOAD_DOCUMENT,
         )
         asyncio.create_task(runner.run(_run_consolidation(), label="consolidate"))
 

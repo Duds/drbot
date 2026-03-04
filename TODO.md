@@ -24,6 +24,10 @@ When adding a new command:
 
 This ensures users never need to remember slash commands — Claude detects intent and calls the right tool automatically.
 
+## 🏗️ Architecture Principle: Remy as UI Layer, Subagents for Heavy Work
+
+**Remy should stay a thin UI and routing layer.** Telegram, relay, simple task routing, and quick replies live in Remy. Heavy or long-running work (Board of Directors, deep research, retrospective, reindex, consolidation) should be delegated to **parallel subagents** with their own models and tools, not run as fat coroutines inside Remy’s process. Today we use `BackgroundTaskRunner` for fire-and-forget; the target is **Phase 7 Step 3** (Claude Agent SDK subagents) so that board, research, etc. are true subagents and Remy just receives results and delivers them. New features that add heavy logic should be designed as subagent tasks, not as more code in the main handler path.
+
 ---
 
 ## ✅ Current State (What Remy Does Well)
@@ -333,9 +337,9 @@ See `docs/backlog/US-persistent-job-tracking.md` for full spec.
 - [x] Add `list_background_jobs` tool → natural language: "is my board analysis done yet?"
 - [x] On bot restart: jobs still marked `running` are flipped to `failed` with a note
 
-### Step 3 — Claude Agent SDK Subagents (future, major refactor)
+### Step 3 — Claude Agent SDK Subagents (target architecture)
 
-Deferred until Steps 1 & 2 are proven insufficient. Requires replacing `ClaudeClient.stream_with_tools()`.
+**Goal:** Remy as UI layer only; board, research, retrospective, etc. run as parallel subagents that report back. Deferred so far; revisit when prioritising "Remy thin, subagents for heavy work." Requires replacing or wrapping `ClaudeClient.stream_with_tools()`.
 
 - [ ] Evaluate `claude-agent-sdk` (`pip install claude-agent-sdk`) as a replacement for the
       manual tool-use loop in `remy/ai/claude_client.py`
@@ -353,6 +357,7 @@ Deferred until Steps 1 & 2 are proven insufficient. Requires replacing `ClaudeCl
       Opus for deep analysis — without changing the main conversation model
 - **Constraint:** Subagents cannot spawn their own subagents (no `Task` tool in subagent's tools)
 - **Dependency:** `claude-agent-sdk` replaces the hand-rolled agentic loop; test thoroughly before merging
+- **Next:** Concrete evaluation and first-subagent steps are in [docs/backlog/US-subagents-next-plan.md](docs/backlog/US-subagents-next-plan.md).
 
 ---
 
@@ -364,7 +369,7 @@ Combines Telegram Bot API (inline keyboards, callbacks, chat actions) with Claud
 
 ### Tier 1 — Do first (highest daily impact)
 
-- [ ] **Confirmation flows** (`US-confirmation-flows`) — [Confirm] [Cancel] inline buttons for destructive actions (archive emails, delete automation). Replaces "Reply yes" text flow.
+- [x] **Confirmation flows** (`US-confirmation-flows`) — [Confirm] [Cancel] inline buttons for destructive actions (archive emails, delete automation). Replaces "Reply yes" text flow.
 - [x] **Smart reply buttons** (`US-smart-reply-buttons`) — Contextual [Add to calendar], [Forward to cowork], [Break down] on substantive replies. Requires `CallbackQueryHandler` + pipeline `suggested_actions`.
 - [x] **Snooze/Complete on reminders** (`US-snooze-complete-reminders`) — [Snooze 5m] [Snooze 15m] [Done] on proactive reminder messages.
 - [x] **Emoji reactions as task feedback** (`US-emoji-reactions-feedback`) — Automatic 🤩 on user's message when allowlisted tools complete. Builds on `US-emoji-reaction-handling` (done).
@@ -458,7 +463,7 @@ These were in my-agent and caused bloat. **Do not implement.**
 | **S**    | Cloudflare Tunnel — remote log/telemetry access                    | US-cloudflare-tunnel-remote-observability | ✅ Done — https://remy.dalerogers.com.au |
 | **S**    | Claude Agent SDK subagents                                         | US-claude-agent-sdk-subagents       | ⬜ Deferred (major refactor) |
 | **S**    | Gmail send                                                         | —                                   | ⬜ Deferred (security)       |
-| **S**    | Confirmation flows (inline Confirm/Cancel)                          | US-confirmation-flows               | ⬜ Phase 8                   |
+| **S**    | Confirmation flows (inline Confirm/Cancel)                          | US-confirmation-flows               | ✅ Done                      |
 | **S**    | Smart reply buttons (Add to calendar, Forward to cowork)             | US-smart-reply-buttons              | ✅ Done                      |
 | **S**    | Snooze/Complete on proactive reminders                              | US-snooze-complete-reminders        | ✅ Done                      |
 | **C**    | Emoji reactions as task completion feedback                         | US-emoji-reactions-feedback         | ✅ Done                      |
@@ -466,11 +471,12 @@ These were in my-agent and caused bloat. **Do not implement.**
 | **C**    | Conversational briefing via Remy (morning)                           | US-conversational-briefing-via-remy | ✅ Done                      |
 | **C**    | Calendar quick add from inline suggestions                           | US-calendar-quick-add               | ✅ Done                      |
 | **C**    | Send to cowork with one tap                                          | US-send-to-cowork                   | ✅ Done                      |
-| **S**    | Fix save_bookmark KnowledgeStore AttributeError                     | US-fix-save-bookmark-knowledge-store | ⬜ Backlog                   |
-| **S**    | Cap tool iterations per turn (reduce latency)                         | US-cap-tool-iterations-per-turn    | ⬜ Backlog                   |
-| **S**    | Web search optimisation (per-turn limit, caching)                    | US-web-search-optimisation         | ⬜ Backlog                   |
-| **C**    | Aggressive session compaction (earlier trigger, smaller window)      | US-aggressive-session-compaction  | ⬜ Backlog                   |
-| **C**    | Anthropic overload detection and fallback                            | US-anthropic-overload-fallback    | ⬜ Backlog                   |
+| **S**    | Fix save_bookmark KnowledgeStore AttributeError                     | US-fix-save-bookmark-knowledge-store | ✅ Done                      |
+| **S**    | Cap tool iterations per turn (reduce latency)                         | US-cap-tool-iterations-per-turn    | ✅ Done                      |
+| **S**    | Step-limit message inline buttons (Continue / Break down / Stop)      | US-step-limit-buttons              | ✅ Done                      |
+| **S**    | Web search optimisation (per-turn limit, caching)                    | US-web-search-optimisation         | ✅ Done                      |
+| **C**    | Aggressive session compaction (earlier trigger, smaller window)      | US-aggressive-session-compaction  | ✅ Done                      |
+| **C**    | Anthropic overload detection and fallback                            | US-anthropic-overload-fallback    | ✅ Done                      |
 | **W**    | Headless browser automation                                        | —                                   | ❌ Avoid                     |
 | **W**    | Knowledge graph + vector store                                     | —                                   | ❌ Avoid                     |
 
@@ -515,13 +521,14 @@ These were in my-agent and caused bloat. **Do not implement.**
 
 ### Round-Trip Latency (Performance)
 
-From telemetry analysis 03/03/2026: avg ~19.5 s per turn; tool execution dominates. See `docs/backlog/` (US-fix-save-bookmark-knowledge-store, US-cap-tool-iterations-per-turn, US-web-search-optimisation, US-aggressive-session-compaction, US-anthropic-overload-fallback).
+From telemetry analysis 03/03/2026: avg ~19.5 s per turn; tool execution dominates. See `docs/backlog/` (US-fix-save-bookmark-knowledge-store, US-cap-tool-iterations-per-turn, US-step-limit-buttons, US-web-search-optimisation, US-aggressive-session-compaction, US-anthropic-overload-fallback).
 
-1. **Fix save_bookmark** (`US-fix-save-bookmark-knowledge-store`) — KnowledgeStore.add AttributeError; blocks bookmark tool
-2. **Cap tool iterations** (`US-cap-tool-iterations-per-turn`) — Configurable max_iterations, graceful truncation
-3. **Web search optimisation** (`US-web-search-optimisation`) — Per-turn limit, optional caching, "search once then decide"
-4. **Aggressive session compaction** (`US-aggressive-session-compaction`) — Earlier trigger, smaller recent-turns window for tool-heavy flows
-5. **Anthropic overload fallback** (`US-anthropic-overload-fallback`) — Detect overloaded_error, user message, optional Haiku fallback
+1. ~~**Fix save_bookmark** (`US-fix-save-bookmark-knowledge-store`)~~ — ✅ Done (KnowledgeStore.add_item)
+2. ~~**Cap tool iterations** (`US-cap-tool-iterations-per-turn`)~~ — ✅ Done (configurable max_iterations, graceful truncation)
+3. ~~**Step-limit buttons** (`US-step-limit-buttons`)~~ — ✅ Done ([Continue] [Break down] [Stop] on truncation message)
+4. ~~**Web search optimisation** (`US-web-search-optimisation`)~~ — ✅ Done (per-turn limit, prompt guidance)
+5. ~~**Aggressive session compaction** (`US-aggressive-session-compaction`)~~ — ✅ Done (earlier trigger, configurable thresholds)
+6. ~~**Anthropic overload fallback** (`US-anthropic-overload-fallback`)~~ — ✅ Done (detect overloaded_error, user message, optional fallback model)
 
 ---
 
@@ -728,3 +735,30 @@ Enable bidirectional communication between Claude Desktop and Remy (Telegram), s
 - See `CLAUDE.md` for existing relay MCP spec
 - Bookmark saved: https://huggingface.co/dphn/dolphin-2.6-mistral-7b (local Ollama candidate — to evaluate)
 - Current relay is one-directional and only works inside Claude Desktop session
+
+---
+
+## 🔁 US: Two-Way Claude Desktop ↔ Remy Relay
+
+**Added:** March 2026 (US written)
+**Backlog ref:** `US-claude-desktop-relay` → `docs/backlog/US-claude-desktop-relay.md`
+**Priority:** S (Should Have)
+**MoSCoW table entry:** Add to table — `US-claude-desktop-relay` | ⬜ Backlog
+
+### Summary
+
+Remy can currently receive tasks from Claude Desktop via the relay MCP, but cannot reply back.
+The US covers adding relay tools to Remy's ToolRegistry so the channel is truly bidirectional.
+
+### Key deliverables
+
+- `remy/ai/tools/relay.py` — `RelayToolExecutor` (get_messages, post_message, get_tasks, update_task, post_note)
+- Relay tool schemas in `remy/ai/tools/schemas.py`
+- `/relay` slash command in `bot/handlers.py`
+- `RELAY_MCP_URL` + `RELAY_MCP_SECRET` env vars added to `.env.example`
+- Optional: morning briefing relay inbox check
+
+### Prerequisite / open question
+
+Audit the relay MCP server transport before implementing — if it's SQLite direct-access, use that.
+If HTTP, use httpx. See US for full detail.

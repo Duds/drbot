@@ -8,6 +8,18 @@ Used when Remy needs to post messages or notes to cowork from Python code
 
 from __future__ import annotations
 
-from .client import post_message_to_cowork, post_note, get_messages_for_remy, get_tasks_for_remy
+from .client import (
+    get_messages_for_remy,
+    get_tasks_for_remy,
+    post_message_to_cowork,
+    post_note,
+    update_task,
+)
 
-__all__ = ["post_message_to_cowork", "post_note", "get_messages_for_remy", "get_tasks_for_remy"]
+__all__ = [
+    "get_messages_for_remy",
+    "get_tasks_for_remy",
+    "post_message_to_cowork",
+    "post_note",
+    "update_task",
+]

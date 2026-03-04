@@ -603,7 +603,20 @@ These are the only emoji accepted by `setMessageReaction`:
 - **Impact:** Bookmarks cannot be saved. Tool silently fails and returns an error to the user.
 - **Root cause (suspected):** `KnowledgeStore` class is missing an `add()` method — either it was never implemented, renamed (e.g. to `save()` or `insert()`), or removed during a refactor without updating the callers.
 - **Priority:** Medium
-- **Status:** Open
+- **Status:** ✅ Closed — fixed in commit 5a632df (US-fix-save-bookmark-knowledge-store). `bookmarks.py` now uses `KnowledgeStore.add_item()` and `FactStore.add(user_id, content, "bookmark")`; `list_bookmarks` uses `get_by_type` + filter by `metadata.category == "bookmark"` instead of non-existent `query()`.
 - **Location:** `remy/memory/knowledge.py` — `KnowledgeStore` class; `remy/ai/tools/bookmarks.py` (or wherever `save_bookmark` calls `store.add(...)`)
 - **Fix:** Add an `add()` method to `KnowledgeStore` (or update the caller to use the correct existing method name).
+- **Reported:** 2026-03-04
+
+---
+
+## Bug 41: Git tools have no repo path context
+
+- **Symptom:** `git_log`, `git_diff`, `git_status`, `git_show_commit` return no results or fail silently — they don't know which repo to operate on.
+- **Impact:** Remy cannot inspect her own codebase via git tooling. Can't review recent commits, diffs, or branch status.
+- **Root cause:** Git tools have no configured `working_directory` / `repo_root`. They need to be pointed at `~/Projects/ai-agents/remy/` (or the equivalent absolute path at runtime) to function.
+- **Priority:** Low
+- **Status:** ✅ Fixed
+- **Location:** `remy/ai/tools/git.py`, `remy/config.py`, `docker-compose.yml`
+- **Fix:** Config already had `workspace_root` (US-git-commits-and-diffs). In Docker the image has no `.git`; repo is available only via the mounted host `Projects` at `/home/remy/Projects`. Set `WORKSPACE_ROOT=/home/remy/Projects/ai-agents/remy` in `docker-compose.yml` for the remy service so git tools resolve against the remy repo. For non-Docker runs from the repo, `workspace_root` can stay unset (cwd is used).
 - **Reported:** 2026-03-04

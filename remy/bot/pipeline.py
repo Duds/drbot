@@ -17,9 +17,9 @@ from typing import TYPE_CHECKING
 from .handlers import (
     _TOOL_TURN_PREFIX,
     _build_message_from_turn,
-    _sanitize_messages_for_claude,
     _trim_messages_to_budget,
 )
+from .handlers.base import _sanitize_messages_for_claude
 from .session import SessionManager
 from .streaming import StreamingReply
 from ..ai.claude_client import (
@@ -228,6 +228,20 @@ async def run_proactive_trigger(
         await streamer.finalize()
         final_text = streamer.full_text.strip()
 
+        # Bug 35/42: When the only tool is react_to_message and there's no text,
+        # delete the status message — the emoji reaction is the complete response.
+        _REACTION_ONLY_TOOLS = frozenset({"react_to_message"})
+        tool_names = set()
+        for assistant_blocks, _ in tool_turns:
+            for block in assistant_blocks:
+                if isinstance(block, dict) and block.get("type") == "tool_use":
+                    tool_names.add(block.get("name"))
+        if tool_turns and not final_text and tool_names == _REACTION_ONLY_TOOLS:
+            try:
+                await sent.delete()
+            except Exception as e:
+                logger.debug("Could not delete react_to_message status message: %s", e)
+
         # ------------------------------------------------------------------ #
         # 4b. Attach keyboard to message                                      #
         #     Reminders: [Snooze 5m] [Snooze 15m] [Done]                       #
@@ -275,12 +289,12 @@ async def run_proactive_trigger(
                             }
                         )
                 if actions:
-                    keyboard = make_suggested_actions_keyboard(actions, user_id)
-                    if keyboard:
+                    cal_keyboard = make_suggested_actions_keyboard(actions, user_id)
+                    if cal_keyboard is not None:
                         await bot.edit_message_reply_markup(
                             chat_id=chat_id,
                             message_id=sent.message_id,
-                            reply_markup=keyboard,
+                            reply_markup=cal_keyboard,
                         )
             except Exception as e:
                 logger.debug(

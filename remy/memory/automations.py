@@ -34,7 +34,10 @@ class AutomationStore:
                 (user_id, label, cron, fire_at),
             )
             await conn.commit()
-            return cursor.lastrowid
+            rid = cursor.lastrowid
+            if rid is None:
+                raise RuntimeError("INSERT into automations did not return lastrowid")
+            return rid
 
     async def delete(self, automation_id: int) -> None:
         """Delete an automation row unconditionally (used after one-time reminders fire)."""

@@ -39,7 +39,7 @@ def make_admin_handlers(
 ):
     """
     Factory that returns admin and analytics handlers.
-    
+
     Returns a dict of command_name -> handler_function.
     """
 
@@ -50,6 +50,8 @@ def make_admin_handlers(
         /logs tail N   — last N raw log lines (max 100)
         /logs errors   — errors only
         """
+        if update.message is None or update.effective_user is None:
+            return
         if await reject_unauthorized(update):
             return
 
@@ -90,6 +92,8 @@ def make_admin_handlers(
 
     async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """/stats [period] — conversation usage statistics."""
+        if update.message is None or update.effective_user is None:
+            return
         if await reject_unauthorized(update):
             return
         if conversation_analyzer is None:
@@ -99,7 +103,9 @@ def make_admin_handlers(
         args = context.args or []
         period = args[0].lower() if args else "30d"
         valid_periods = {"7d", "30d", "90d", "all", "month"}
-        if period not in valid_periods and not (period.endswith("d") and period[:-1].isdigit()):
+        if period not in valid_periods and not (
+            period.endswith("d") and period[:-1].isdigit()
+        ):
             await update.message.reply_text(
                 "Usage: /stats [period]\nValid periods: 7d, 30d (default), 90d, all"
             )
@@ -118,6 +124,8 @@ def make_admin_handlers(
 
     async def costs_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """/costs [period] — estimated AI costs by provider and model."""
+        if update.message is None or update.effective_user is None:
+            return
         if await reject_unauthorized(update):
             return
         if db is None:
@@ -129,7 +137,9 @@ def make_admin_handlers(
         args = context.args or []
         period = args[0].lower() if args else "30d"
         valid_periods = {"7d", "30d", "90d", "all", "month"}
-        if period not in valid_periods and not (period.endswith("d") and period[:-1].isdigit()):
+        if period not in valid_periods and not (
+            period.endswith("d") and period[:-1].isdigit()
+        ):
             await update.message.reply_text(
                 "Usage: /costs [period]\nValid periods: 7d, 30d (default), 90d, all"
             )
@@ -149,6 +159,8 @@ def make_admin_handlers(
 
     async def goal_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """/goal-status — goal tracking dashboard with age and staleness info."""
+        if update.message is None or update.effective_user is None:
+            return
         if await reject_unauthorized(update):
             return
         if conversation_analyzer is None:
@@ -161,7 +173,9 @@ def make_admin_handlers(
         try:
             active = await conversation_analyzer.get_active_goals_with_age(user_id)
             since = datetime.now(timezone.utc) - timedelta(days=30)
-            completed = await conversation_analyzer.get_completed_goals_since(user_id, since)
+            completed = await conversation_analyzer.get_completed_goals_since(
+                user_id, since
+            )
             msg = conversation_analyzer.format_goal_status_message(active, completed)
             await sent.edit_text(msg, parse_mode="Markdown")
         except Exception as exc:
@@ -170,6 +184,8 @@ def make_admin_handlers(
 
     async def retrospective_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """/retrospective — generate a monthly retrospective using Claude."""
+        if update.message is None or update.effective_user is None:
+            return
         if await reject_unauthorized(update):
             return
         if conversation_analyzer is None:
@@ -193,16 +209,24 @@ def make_admin_handlers(
                 user_id, "month", claude_client
             )
 
-        job_id = await job_store.create(user_id, "retrospective", "") if job_store else None
+        job_id = (
+            await job_store.create(user_id, "retrospective", "") if job_store else None
+        )
         runner = BackgroundTaskRunner(
-            context.bot, update.message.chat_id,
-            job_store=job_store, job_id=job_id,
+            context.bot,
+            update.message.chat_id,
+            job_store=job_store,
+            job_id=job_id,
             working_message=wm,
+            thread_id=thread_id,
+            chat_action=ChatAction.UPLOAD_DOCUMENT,
         )
         asyncio.create_task(runner.run(_run_retrospective(), label="retrospective"))
 
     async def jobs_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """/jobs — list recent background jobs with status and result snippets."""
+        if update.message is None or update.effective_user is None:
+            return
         if await reject_unauthorized(update):
             return
         if job_store is None:
@@ -224,15 +248,17 @@ def make_admin_handlers(
             snippet = ""
             if job["result_text"]:
                 preview = job["result_text"][:80].replace("\n", " ")
-                snippet = f'\n  _{preview}…_'
+                snippet = f"\n  _{preview}…_"
             lines.append(
-                f'`#{job["id"]}` {job["job_type"]:14} {emoji} `{job["status"]}`  {started}{snippet}'
+                f"`#{job['id']}` {job['job_type']:14} {emoji} `{job['status']}`  {started}{snippet}"
             )
 
         await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
     async def reindex_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """/reindex — trigger file reindexing for home directory RAG."""
+        if update.message is None or update.effective_user is None:
+            return
         if await reject_unauthorized(update):
             return
 
@@ -264,16 +290,26 @@ def make_admin_handlers(
                 f"  Errors: {stats.get('errors', 0)}"
             )
 
-        job_id = await job_store.create(update.effective_user.id, "reindex", "") if job_store else None
+        job_id = (
+            await job_store.create(update.effective_user.id, "reindex", "")
+            if job_store
+            else None
+        )
         runner = BackgroundTaskRunner(
-            context.bot, update.message.chat_id,
-            job_store=job_store, job_id=job_id,
+            context.bot,
+            update.message.chat_id,
+            job_store=job_store,
+            job_id=job_id,
             working_message=wm,
+            thread_id=thread_id,
+            chat_action=ChatAction.UPLOAD_DOCUMENT,
         )
         asyncio.create_task(runner.run(_run_reindex(), label="reindex"))
 
     async def diagnostics_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Run comprehensive self-diagnostics."""
+        if update.message is None or update.effective_user is None:
+            return
         if await reject_unauthorized(update):
             return
         await _run_diagnostics(update, diagnostics_runner, scheduler_ref)
@@ -297,31 +333,33 @@ async def _run_diagnostics(
 ) -> None:
     """Run comprehensive self-diagnostics and send results to user."""
     from ...diagnostics import format_diagnostics_output
-    
+
+    if update.message is None or update.effective_user is None:
+        return
     await update.message.chat.send_action(ChatAction.TYPING)
-    
+
     if diagnostics_runner is None:
         await update.message.reply_text("Diagnostics runner not available.")
         return
-    
+
     try:
         result = await diagnostics_runner.run_all()
         output = format_diagnostics_output(result, settings.scheduler_timezone)
-        
+
         logger.info(
             "Diagnostics complete: %s (%d checks, %.0fms)",
             result.overall_status.value,
             len(result.checks),
             result.total_duration_ms,
         )
-        
+
         if len(output) > 4000:
             output = output[:4000] + "\n\n_(truncated)_"
-        
+
         await update.message.reply_text(output, parse_mode="Markdown")
-        
-    except Exception as e:
+
+    except Exception as exc:
         logger.exception("Diagnostics failed")
         await update.message.reply_text(
-            f"❌ Diagnostics failed: {type(e).__name__}: {e}"
+            f"❌ Diagnostics failed: {type(exc).__name__}: {exc}"
         )

@@ -101,7 +101,10 @@ class FactStore:
                 """,
                 (user_id, fact.category, fact.content, fact.confidence),
             )
-            fact_id = cursor.lastrowid
+            fact_id_raw = cursor.lastrowid
+            if fact_id_raw is None:
+                raise RuntimeError("INSERT into facts did not return lastrowid")
+            fact_id = fact_id_raw
             await conn.commit()
 
         # Store embedding in background (non-blocking relative to caller)
@@ -127,9 +130,7 @@ class FactStore:
             )
             return {row["content"].lower() for row in rows}
 
-    async def get_for_user(
-        self, user_id: int, limit: int = 50
-    ) -> list[dict[str, Any]]:
+    async def get_for_user(self, user_id: int, limit: int = 50) -> list[dict[str, Any]]:
         """Return recent facts for a user, newest first."""
         async with self._db.get_connection() as conn:
             rows = await conn.execute_fetchall(
@@ -178,7 +179,8 @@ class FactStore:
                     (new_content, fact_id, user_id),
                 )
             await conn.commit()
-            return cursor.rowcount > 0
+            rc = cursor.rowcount
+            return rc is not None and rc > 0
 
     async def delete(self, user_id: int, fact_id: int) -> bool:
         """Delete a fact by ID. Returns True if a row was deleted."""
@@ -188,7 +190,8 @@ class FactStore:
                 (fact_id, user_id),
             )
             await conn.commit()
-            return cursor.rowcount > 0
+            rc = cursor.rowcount
+            return rc is not None and rc > 0
 
     async def add(self, user_id: int, content: str, category: str = "other") -> int:
         """Manually insert a fact (bypasses extraction). Returns the new fact ID."""
@@ -196,11 +199,13 @@ class FactStore:
         await self._insert(user_id, fact)
         # Retrieve the ID of what was just inserted
         async with self._db.get_connection() as conn:
-            row = await conn.execute_fetchall(
-                "SELECT id FROM facts WHERE user_id=? AND content=? ORDER BY id DESC LIMIT 1",
-                (user_id, content),
+            rows = list(
+                await conn.execute_fetchall(
+                    "SELECT id FROM facts WHERE user_id=? AND content=? ORDER BY id DESC LIMIT 1",
+                    (user_id, content),
+                )
             )
-            return row[0]["id"] if row else 0
+            return int(rows[0]["id"]) if rows else 0
 
 
 async def extract_and_store_facts(

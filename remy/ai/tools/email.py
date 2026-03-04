@@ -215,17 +215,20 @@ async def exec_classify_promotional_emails(registry: ToolRegistry, inp: dict) ->
 
     limit = min(int(inp.get("limit", 30)), 100)
 
+    err: Exception | None = None
     try:
         promos = await registry._gmail.classify_promotional(limit=limit)
     except Exception as e:
-        return f"Gmail error: {e}"
+        err = e
+    if err is not None:
+        return f"Gmail error: {err}"
 
     if not promos:
         return "✅ No promotional emails detected."
 
     lines = [f"🗑 {len(promos)} promotional email(s) found:\n"]
-    for e in promos[:10]:
-        lines.append(f"• {e['subject'][:80]}\n  _From: {e['from_addr'][:60]}_")
+    for item in promos[:10]:
+        lines.append(f"• {item['subject'][:80]}\n  _From: {item['from_addr'][:60]}_")
     if len(promos) > 10:
         lines.append(f"…and {len(promos) - 10} more")
     lines.append(

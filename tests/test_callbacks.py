@@ -6,6 +6,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from remy.bot.handlers.callbacks import (
+    make_step_limit_keyboard,
     store_pending_archive,
     make_archive_keyboard,
     make_suggested_actions_keyboard,
@@ -52,6 +53,24 @@ class TestMakeSuggestedActionsKeyboard:
     def test_returns_none_for_empty_after_filter(self):
         actions = [{"label": "Bad", "callback_id": "invalid"}]
         assert make_suggested_actions_keyboard(actions, 12345) is None
+
+
+class TestMakeStepLimitKeyboard:
+    """Test step-limit keyboard (Continue / Break down / Stop)."""
+
+    def test_returns_keyboard_with_three_buttons(self):
+        kb = make_step_limit_keyboard()
+        assert kb is not None
+        assert len(kb.inline_keyboard) == 1
+        assert len(kb.inline_keyboard[0]) == 3
+        labels = [b.text for b in kb.inline_keyboard[0]]
+        assert "Continue" in labels
+        assert "Break down" in labels
+        assert "Stop" in labels
+        data = [b.callback_data for b in kb.inline_keyboard[0]]
+        assert "step_limit_continue" in data
+        assert "step_limit_break" in data
+        assert "step_limit_stop" in data
 
 
 class TestMakeArchiveKeyboard:

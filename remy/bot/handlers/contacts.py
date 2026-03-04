@@ -26,12 +26,14 @@ def make_contacts_handlers(
 ):
     """
     Factory that returns Google Contacts handlers.
-    
+
     Returns a dict of command_name -> handler_function.
     """
 
     async def contacts_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """/contacts [query] — list all contacts or search by name/email."""
+        if update.message is None or update.effective_user is None:
+            return
         if await reject_unauthorized(update):
             return
         if google_contacts is None:
@@ -39,27 +41,32 @@ def make_contacts_handlers(
             return
         query = " ".join(context.args).strip() if context.args else ""
         if query:
-            await update.message.reply_text(f"🔍 Searching contacts for _{query}_…", parse_mode="Markdown")
+            await update.message.reply_text(
+                f"🔍 Searching contacts for _{query}_…", parse_mode="Markdown"
+            )
             try:
                 people = await google_contacts.search_contacts(query, max_results=10)
-            except Exception as e:
-                await update.message.reply_text(f"❌ Contacts search failed: {e}")
+            except Exception as exc:
+                await update.message.reply_text(f"❌ Contacts search failed: {exc}")
                 return
             if not people:
-                await update.message.reply_text(f"No contacts matching _{query}_.", parse_mode="Markdown")
+                await update.message.reply_text(
+                    f"No contacts matching _{query}_.", parse_mode="Markdown"
+                )
                 return
         else:
             await update.message.reply_text("📋 Fetching contacts…")
             try:
                 people = await google_contacts.list_contacts(max_results=50)
-            except Exception as e:
-                await update.message.reply_text(f"❌ Could not fetch contacts: {e}")
+            except Exception as exc:
+                await update.message.reply_text(f"❌ Could not fetch contacts: {exc}")
                 return
             if not people:
                 await update.message.reply_text("No contacts found.")
                 return
 
         from ...google.contacts import format_contact
+
         lines = [f"👥 *{len(people)} contact(s):*\n"]
         for p in people[:20]:
             lines.append(format_contact(p))
@@ -68,8 +75,12 @@ def make_contacts_handlers(
             msg = msg[:4000] + "…"
         await update.message.reply_text(msg, parse_mode="Markdown")
 
-    async def contacts_birthday_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def contacts_birthday_command(
+        update: Update, context: ContextTypes.DEFAULT_TYPE
+    ):
         """/contacts-birthday [days=14] — upcoming birthdays."""
+        if update.message is None or update.effective_user is None:
+            return
         if await reject_unauthorized(update):
             return
         if google_contacts is None:
@@ -80,16 +91,19 @@ def make_contacts_handlers(
             days = max(1, min(days, 90))
         except (ValueError, IndexError):
             days = 14
-        await update.message.reply_text(f"🎂 Checking birthdays in the next {days} days…")
+        await update.message.reply_text(
+            f"🎂 Checking birthdays in the next {days} days…"
+        )
         try:
             upcoming = await google_contacts.get_upcoming_birthdays(days=days)
-        except Exception as e:
-            await update.message.reply_text(f"❌ Could not fetch birthdays: {e}")
+        except Exception as exc:
+            await update.message.reply_text(f"❌ Could not fetch birthdays: {exc}")
             return
         if not upcoming:
             await update.message.reply_text(f"🎂 No birthdays in the next {days} days.")
             return
         from ...google.contacts import _extract_name
+
         lines = [f"🎂 *Upcoming birthdays (next {days} days):*\n"]
         for bday_date, person in upcoming:
             name = _extract_name(person) or "(unknown)"
@@ -97,8 +111,12 @@ def make_contacts_handlers(
             lines.append(f"• *{name}* — {bday_date.strftime('%d %b')}{yr}")
         await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
-    async def contacts_details_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def contacts_details_command(
+        update: Update, context: ContextTypes.DEFAULT_TYPE
+    ):
         """/contacts-details <name> — full details for a contact."""
+        if update.message is None or update.effective_user is None:
+            return
         if await reject_unauthorized(update):
             return
         if google_contacts is None:
@@ -110,20 +128,25 @@ def make_contacts_handlers(
         query = " ".join(context.args)
         try:
             people = await google_contacts.search_contacts(query, max_results=5)
-        except Exception as e:
-            await update.message.reply_text(f"❌ Search failed: {e}")
+        except Exception as exc:
+            await update.message.reply_text(f"❌ Search failed: {exc}")
             return
         if not people:
-            await update.message.reply_text(f"No contact found matching _{query}_.", parse_mode="Markdown")
+            await update.message.reply_text(
+                f"No contact found matching _{query}_.", parse_mode="Markdown"
+            )
             return
         from ...google.contacts import format_contact, _extract_name
+
         top = people[0]
         resource_name = top.get("resourceName", "")
         try:
             if resource_name:
                 top = await google_contacts.get_contact(resource_name)
         except Exception as e:
-            logger.debug("Failed to fetch full contact details, using search result: %s", e)
+            logger.debug(
+                "Failed to fetch full contact details, using search result: %s", e
+            )
         lines = ["👤 *Contact details:*\n", format_contact(top, verbose=True)]
         if len(people) > 1:
             others = [_extract_name(p) or "?" for p in people[1:]]
@@ -132,6 +155,8 @@ def make_contacts_handlers(
 
     async def contacts_note_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """/contacts-note <name> <note> — add/update a note on a contact."""
+        if update.message is None or update.effective_user is None:
+            return
         if await reject_unauthorized(update):
             return
         if google_contacts is None:
@@ -144,8 +169,8 @@ def make_contacts_handlers(
         note_text = " ".join(context.args[1:])
         try:
             people = await google_contacts.search_contacts(name_query, max_results=3)
-        except Exception as e:
-            await update.message.reply_text(f"❌ Search failed: {e}")
+        except Exception as exc:
+            await update.message.reply_text(f"❌ Search failed: {exc}")
             return
         if not people:
             await update.message.reply_text(
@@ -155,6 +180,7 @@ def make_contacts_handlers(
             )
             return
         from ...google.contacts import _extract_name
+
         person = people[0]
         resource_name = person.get("resourceName", "")
         name = _extract_name(person) or name_query
@@ -164,11 +190,15 @@ def make_contacts_handlers(
                 f"✅ Note updated for *{name}*:\n_{note_text}_",
                 parse_mode="Markdown",
             )
-        except Exception as e:
-            await update.message.reply_text(f"❌ Could not update note: {e}")
+        except Exception as exc:
+            await update.message.reply_text(f"❌ Could not update note: {exc}")
 
-    async def contacts_prune_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def contacts_prune_command(
+        update: Update, context: ContextTypes.DEFAULT_TYPE
+    ):
         """/contacts-prune — list contacts with no email and no phone (candidates for deletion)."""
+        if update.message is None or update.effective_user is None:
+            return
         if await reject_unauthorized(update):
             return
         if google_contacts is None:
@@ -181,16 +211,21 @@ def make_contacts_handlers(
             await update.message.reply_text(f"❌ Could not scan contacts: {e}")
             return
         if not sparse:
-            await update.message.reply_text("✅ All contacts have at least an email or phone number.")
+            await update.message.reply_text(
+                "✅ All contacts have at least an email or phone number."
+            )
             return
         from ...google.contacts import _extract_name
+
         lines = [f"🗑 *{len(sparse)} contact(s) with no email or phone:*\n"]
         for p in sparse[:30]:
             name = _extract_name(p) or "(no name)"
             lines.append(f"• {name}")
         if len(sparse) > 30:
             lines.append(f"…and {len(sparse) - 30} more")
-        lines.append("\n_Use /contacts-details <name> to review, or delete in Google Contacts._")
+        lines.append(
+            "\n_Use /contacts-details <name> to review, or delete in Google Contacts._"
+        )
         await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
     return {

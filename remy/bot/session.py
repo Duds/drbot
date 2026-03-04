@@ -63,11 +63,15 @@ class SessionManager:
         rollover at midnight UTC would create a new empty session mid-afternoon for
         users in AEDT (UTC+11), discarding the morning's conversation context.
         """
+        from zoneinfo import ZoneInfo
+
         from ..config import settings
+
+        tz: ZoneInfo | timezone = timezone.utc
         try:
             tz = zoneinfo.ZoneInfo(settings.scheduler_timezone)
         except Exception:
-            tz = timezone.utc
+            pass
         date = datetime.now(tz).strftime("%Y%m%d")
         if thread_id is not None:
             return f"user_{user_id}_thread_{thread_id}_{date}"

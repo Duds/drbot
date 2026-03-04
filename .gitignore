@@ -4,6 +4,8 @@ config/SOUL.md
 
 # Runtime data (personal / generated)
 data/
+relay_mcp/relay.db
+MagicMock/
 
 # Python
 __pycache__/

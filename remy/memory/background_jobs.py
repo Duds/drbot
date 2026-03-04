@@ -41,7 +41,12 @@ class BackgroundJobStore:
                 (user_id, job_type, input_text),
             )
             await conn.commit()
-            return cursor.lastrowid
+            rid = cursor.lastrowid
+            if rid is None:
+                raise RuntimeError(
+                    "INSERT into background_jobs did not return lastrowid"
+                )
+            return rid
 
     async def set_running(self, job_id: int) -> None:
         async with self._db.get_connection() as conn:

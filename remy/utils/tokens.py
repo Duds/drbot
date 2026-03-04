@@ -32,8 +32,9 @@ def count_tokens(text: str, model: str = "claude-sonnet-4-20250514") -> int:
 
     try:
         import anthropic
+
         client = anthropic.Anthropic()
-        result = client.count_tokens(
+        result = client.count_tokens(  # type: ignore[attr-defined]
             model=model,
             messages=[{"role": "user", "content": text}],
         )
@@ -57,7 +58,9 @@ def estimate_tokens(text: str) -> int:
     structured_markers = ["<", "{", "```", "def ", "class ", "import "]
     is_structured = any(marker in text for marker in structured_markers)
 
-    chars_per_token = _CHARS_PER_TOKEN_STRUCTURED if is_structured else _CHARS_PER_TOKEN_PROSE
+    chars_per_token = (
+        _CHARS_PER_TOKEN_STRUCTURED if is_structured else _CHARS_PER_TOKEN_PROSE
+    )
     return int(len(text) / chars_per_token)
 
 

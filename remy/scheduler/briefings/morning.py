@@ -65,6 +65,10 @@ class MorningBriefingGenerator(BriefingGenerator):
         if stale_plans_section:
             sections.append(stale_plans_section)
 
+        relay_section = await self._build_relay_section()
+        if relay_section:
+            sections.append(relay_section)
+
         return "\n\n".join(sections)
 
     async def generate_structured(self) -> dict[str, Any]:
@@ -74,10 +78,11 @@ class MorningBriefingGenerator(BriefingGenerator):
         run_proactive_trigger context. Dates in ISO for parsing; locale hints for output.
         """
         tz_name = getattr(settings, "scheduler_timezone", "Australia/Sydney")
+        tz: ZoneInfo | timezone = timezone.utc
         try:
             tz = ZoneInfo(tz_name)
         except ZoneInfoNotFoundError:
-            tz = timezone.utc
+            pass
         today = datetime.now(tz).date()
         date_str = today.strftime("%Y-%m-%d")
 
@@ -213,6 +218,29 @@ class MorningBriefingGenerator(BriefingGenerator):
         else:
             payload["stale_plans"] = []
 
+        # Relay inbox (US-claude-desktop-relay)
+        try:
+            from ...relay.client import get_messages_for_remy, get_tasks_for_remy
+
+            _, unread = await get_messages_for_remy(
+                agent="remy",
+                unread_only=True,
+                mark_read=False,
+                limit=1,
+                db_path=settings.db_path,
+            )
+            _, pending = await get_tasks_for_remy(
+                agent="remy",
+                status="pending",
+                limit=1,
+                db_path=settings.db_path,
+            )
+            payload["relay_unread"] = unread
+            payload["relay_pending"] = pending
+        except Exception:
+            payload["relay_unread"] = 0
+            payload["relay_pending"] = 0
+
         return payload
 
     async def _build_goals_section(self) -> str:
@@ -342,3 +370,31 @@ class MorningBriefingGenerator(BriefingGenerator):
             lines.append(f"_…and {len(stale) - 5} more steps_")
 
         return "\n".join(lines)
+
+    async def _build_relay_section(self) -> str:
+        """One-liner if there are unread relay messages or pending tasks from cowork (US-claude-desktop-relay)."""
+        try:
+            from ...config import settings
+            from ...relay.client import get_messages_for_remy, get_tasks_for_remy
+
+            messages, unread = await get_messages_for_remy(
+                agent="remy",
+                unread_only=True,
+                mark_read=False,
+                limit=5,
+                db_path=settings.db_path,
+            )
+            tasks, pending = await get_tasks_for_remy(
+                agent="remy",
+                status="pending",
+                limit=5,
+                db_path=settings.db_path,
+            )
+        except Exception:
+            return ""
+        lines = []
+        if unread > 0:
+            lines.append(f"📬 {unread} unread message(s) from cowork.")
+        if pending > 0:
+            lines.append(f"📋 {pending} pending task(s) from cowork.")
+        return "\n".join(lines) if lines else ""
