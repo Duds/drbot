@@ -1,4 +1,4 @@
-.PHONY: run test test-cov lint build docker-run docker-stop setup db db-init \
+.PHONY: run test test-cov lint build docker-run docker-stop fix-it setup db db-init \
         deploy deploy-update deploy-logs deploy-delete health \
         relay-up relay-run relay-stop relay-check relay-setup-check relay-verify \
         install-launchd uninstall-launchd \
@@ -90,6 +90,12 @@ docker-run:
 
 docker-stop:
 	docker compose down
+
+# Rebuild all images and restart remy, relay, ollama. Use after code/config changes.
+fix-it:
+	docker compose build --no-cache
+	docker compose up -d --force-recreate remy relay ollama
+	@echo "Stack rebuilt and restarted. Check: make relay-check && make health"
 
 # Quick health check against local or remote container
 # Usage: make health HOST=localhost PORT=8080
