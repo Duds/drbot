@@ -10,6 +10,7 @@ from remy.ai.tools.plans import (
     exec_create_plan,
     exec_get_plan,
     exec_list_plans,
+    exec_update_plan,
     exec_update_plan_status,
     exec_update_plan_step,
 )
@@ -40,8 +41,10 @@ class TestExecCreatePlan:
         """Should require a plan title."""
         store = AsyncMock()
         registry = make_registry(plan_store=store)
-        
-        result = await exec_create_plan(registry, {"title": "", "steps": ["Step 1"]}, USER_ID)
+
+        result = await exec_create_plan(
+            registry, {"title": "", "steps": ["Step 1"]}, USER_ID
+        )
         assert "provide" in result.lower() and "title" in result.lower()
 
     @pytest.mark.asyncio
@@ -49,8 +52,10 @@ class TestExecCreatePlan:
         """Should require at least one step."""
         store = AsyncMock()
         registry = make_registry(plan_store=store)
-        
-        result = await exec_create_plan(registry, {"title": "My Plan", "steps": []}, USER_ID)
+
+        result = await exec_create_plan(
+            registry, {"title": "My Plan", "steps": []}, USER_ID
+        )
         assert "provide" in result.lower() and "step" in result.lower()
 
     @pytest.mark.asyncio
@@ -59,15 +64,49 @@ class TestExecCreatePlan:
         store = AsyncMock()
         store.create_plan = AsyncMock(return_value=123)
         registry = make_registry(plan_store=store)
-        
-        result = await exec_create_plan(registry, {
-            "title": "Learn Python",
-            "description": "Master the language",
-            "steps": ["Read docs", "Write code", "Build project"],
-        }, USER_ID)
-        
-        store.create_plan.assert_called_once()
+
+        result = await exec_create_plan(
+            registry,
+            {
+                "title": "Learn Python",
+                "description": "Master the language",
+                "steps": ["Read docs", "Write code", "Build project"],
+            },
+            USER_ID,
+        )
+
+        store.create_plan.assert_called_once_with(
+            42,
+            "Learn Python",
+            "Master the language",
+            ["Read docs", "Write code", "Build project"],
+            goal_id=None,
+        )
         assert "123" in result or "created" in result.lower() or "✅" in result
+
+    @pytest.mark.asyncio
+    async def test_create_plan_with_goal_id(self):
+        """Should pass goal_id to store when provided."""
+        store = AsyncMock()
+        store.create_plan = AsyncMock(return_value=99)
+        registry = make_registry(plan_store=store)
+        result = await exec_create_plan(
+            registry,
+            {
+                "title": "Fix cupboard",
+                "steps": ["Buy hinge", "Install"],
+                "goal_id": 5,
+            },
+            USER_ID,
+        )
+        store.create_plan.assert_called_once_with(
+            42,
+            "Fix cupboard",
+            None,
+            ["Buy hinge", "Install"],
+            goal_id=5,
+        )
+        assert "99" in result or "created" in result.lower()
 
     @pytest.mark.asyncio
     async def test_includes_steps_in_response(self):
@@ -75,12 +114,16 @@ class TestExecCreatePlan:
         store = AsyncMock()
         store.create_plan = AsyncMock(return_value=1)
         registry = make_registry(plan_store=store)
-        
-        result = await exec_create_plan(registry, {
-            "title": "Test Plan",
-            "steps": ["Step A", "Step B"],
-        }, USER_ID)
-        
+
+        result = await exec_create_plan(
+            registry,
+            {
+                "title": "Test Plan",
+                "steps": ["Step A", "Step B"],
+            },
+            USER_ID,
+        )
+
         assert "Step A" in result or "Step B" in result or "steps" in result.lower()
 
 
@@ -99,7 +142,7 @@ class TestExecGetPlan:
         """Should require either plan_id or title."""
         store = AsyncMock()
         registry = make_registry(plan_store=store)
-        
+
         result = await exec_get_plan(registry, {}, USER_ID)
         assert "provide" in result.lower()
 
@@ -109,7 +152,7 @@ class TestExecGetPlan:
         store = AsyncMock()
         store.get_plan = AsyncMock(return_value=None)
         registry = make_registry(plan_store=store)
-        
+
         result = await exec_get_plan(registry, {"plan_id": 999}, USER_ID)
         assert "not found" in result.lower() or "no plan" in result.lower()
 
@@ -124,16 +167,30 @@ class TestExecGetPlan:
             "created_at": "2026-03-01T10:00:00",
             "updated_at": "2026-03-01T10:00:00",
             "steps": [
-                {"id": 1, "position": 1, "title": "Install Rust", "status": "done", "notes": None, "attempts": []},
-                {"id": 2, "position": 2, "title": "Read the book", "status": "in_progress", "notes": None, "attempts": []},
+                {
+                    "id": 1,
+                    "position": 1,
+                    "title": "Install Rust",
+                    "status": "done",
+                    "notes": None,
+                    "attempts": [],
+                },
+                {
+                    "id": 2,
+                    "position": 2,
+                    "title": "Read the book",
+                    "status": "in_progress",
+                    "notes": None,
+                    "attempts": [],
+                },
             ],
         }
         store = AsyncMock()
         store.get_plan = AsyncMock(return_value=plan)
         registry = make_registry(plan_store=store)
-        
+
         result = await exec_get_plan(registry, {"plan_id": 1}, USER_ID)
-        
+
         assert "Learn Rust" in result
         assert "Install Rust" in result or "Read the book" in result
 
@@ -154,7 +211,7 @@ class TestExecListPlans:
         store = AsyncMock()
         store.list_plans = AsyncMock(return_value=[])
         registry = make_registry(plan_store=store)
-        
+
         result = await exec_list_plans(registry, {}, USER_ID)
         assert "no" in result.lower() and "plan" in result.lower()
 
@@ -182,9 +239,9 @@ class TestExecListPlans:
         store = AsyncMock()
         store.list_plans = AsyncMock(return_value=plans)
         registry = make_registry(plan_store=store)
-        
+
         result = await exec_list_plans(registry, {}, USER_ID)
-        
+
         assert "Learn Python" in result or "Build App" in result
 
     @pytest.mark.asyncio
@@ -193,9 +250,9 @@ class TestExecListPlans:
         store = AsyncMock()
         store.list_plans = AsyncMock(return_value=[])
         registry = make_registry(plan_store=store)
-        
+
         await exec_list_plans(registry, {"status": "complete"}, USER_ID)
-        
+
         store.list_plans.assert_called_once_with(USER_ID, "complete")
 
 
@@ -214,7 +271,7 @@ class TestExecUpdatePlanStep:
         """Should require a step ID."""
         store = AsyncMock()
         registry = make_registry(plan_store=store)
-        
+
         result = await exec_update_plan_step(registry, {}, USER_ID)
         assert "provide" in result.lower() and "step" in result.lower()
 
@@ -224,12 +281,16 @@ class TestExecUpdatePlanStep:
         store = AsyncMock()
         store.update_step_status = AsyncMock(return_value=True)
         registry = make_registry(plan_store=store)
-        
-        result = await exec_update_plan_step(registry, {
-            "step_id": 1,
-            "status": "done",
-        }, USER_ID)
-        
+
+        result = await exec_update_plan_step(
+            registry,
+            {
+                "step_id": 1,
+                "status": "done",
+            },
+            USER_ID,
+        )
+
         store.update_step_status.assert_called_once_with(1, "done")
         assert "updated" in result.lower() or "✅" in result
 
@@ -240,14 +301,18 @@ class TestExecUpdatePlanStep:
         store.update_step_status = AsyncMock(return_value=True)
         store.add_attempt = AsyncMock()
         registry = make_registry(plan_store=store)
-        
-        result = await exec_update_plan_step(registry, {
-            "step_id": 1,
-            "status": "in_progress",
-            "attempt_outcome": "success",
-            "attempt_notes": "Completed first draft",
-        }, USER_ID)
-        
+
+        result = await exec_update_plan_step(
+            registry,
+            {
+                "step_id": 1,
+                "status": "in_progress",
+                "attempt_outcome": "success",
+                "attempt_notes": "Completed first draft",
+            },
+            USER_ID,
+        )
+
         store.add_attempt.assert_called_once()
         assert "attempt" in result.lower() or "logged" in result.lower()
 
@@ -267,8 +332,10 @@ class TestExecUpdatePlanStatus:
         """Should require a plan ID."""
         store = AsyncMock()
         registry = make_registry(plan_store=store)
-        
-        result = await exec_update_plan_status(registry, {"status": "complete"}, USER_ID)
+
+        result = await exec_update_plan_status(
+            registry, {"status": "complete"}, USER_ID
+        )
         assert "provide" in result.lower() and "plan" in result.lower()
 
     @pytest.mark.asyncio
@@ -276,7 +343,7 @@ class TestExecUpdatePlanStatus:
         """Should require a status."""
         store = AsyncMock()
         registry = make_registry(plan_store=store)
-        
+
         result = await exec_update_plan_status(registry, {"plan_id": 1}, USER_ID)
         assert "provide" in result.lower() and "status" in result.lower()
 
@@ -286,12 +353,16 @@ class TestExecUpdatePlanStatus:
         store = AsyncMock()
         store.update_plan_status = AsyncMock(return_value=True)
         registry = make_registry(plan_store=store)
-        
-        result = await exec_update_plan_status(registry, {
-            "plan_id": 1,
-            "status": "complete",
-        }, USER_ID)
-        
+
+        result = await exec_update_plan_status(
+            registry,
+            {
+                "plan_id": 1,
+                "status": "complete",
+            },
+            USER_ID,
+        )
+
         store.update_plan_status.assert_called_once_with(1, "complete")
         assert "complete" in result.lower() or "✅" in result
 
@@ -301,10 +372,66 @@ class TestExecUpdatePlanStatus:
         store = AsyncMock()
         store.update_plan_status = AsyncMock(return_value=False)
         registry = make_registry(plan_store=store)
-        
-        result = await exec_update_plan_status(registry, {
-            "plan_id": 999,
-            "status": "complete",
-        }, USER_ID)
-        
+
+        result = await exec_update_plan_status(
+            registry,
+            {
+                "plan_id": 999,
+                "status": "complete",
+            },
+            USER_ID,
+        )
+
         assert "not found" in result.lower() or "no plan" in result.lower()
+
+
+class TestExecUpdatePlan:
+    """Tests for exec_update_plan executor (goal–plan link)."""
+
+    @pytest.mark.asyncio
+    async def test_no_store_returns_not_available(self):
+        """Should return not available when plan store not configured."""
+        registry = make_registry(plan_store=None)
+        result = await exec_update_plan(registry, {"plan_id": 1}, USER_ID)
+        assert "not available" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_requires_plan_id(self):
+        """Should require a plan ID."""
+        store = AsyncMock()
+        registry = make_registry(plan_store=store)
+        result = await exec_update_plan(registry, {}, USER_ID)
+        assert "provide" in result.lower() and "plan" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_links_plan_to_goal(self):
+        """Should call update_plan_goal with goal_id."""
+        store = AsyncMock()
+        store.update_plan_goal = AsyncMock(return_value=True)
+        registry = make_registry(plan_store=store)
+        result = await exec_update_plan(
+            registry, {"plan_id": 2, "goal_id": 10}, USER_ID
+        )
+        store.update_plan_goal.assert_called_once_with(2, USER_ID, 10)
+        assert "linked" in result.lower() or "✅" in result
+
+    @pytest.mark.asyncio
+    async def test_clears_goal_link(self):
+        """Should clear goal when goal_id omitted."""
+        store = AsyncMock()
+        store.update_plan_goal = AsyncMock(return_value=True)
+        registry = make_registry(plan_store=store)
+        result = await exec_update_plan(registry, {"plan_id": 2}, USER_ID)
+        store.update_plan_goal.assert_called_once_with(2, USER_ID, None)
+        assert "cleared" in result.lower() or "✅" in result
+
+    @pytest.mark.asyncio
+    async def test_returns_not_found(self):
+        """Should return not found when plan does not exist."""
+        store = AsyncMock()
+        store.update_plan_goal = AsyncMock(return_value=False)
+        registry = make_registry(plan_store=store)
+        result = await exec_update_plan(
+            registry, {"plan_id": 999, "goal_id": 1}, USER_ID
+        )
+        assert "no plan" in result.lower() or "not found" in result.lower()

@@ -84,11 +84,12 @@ Tools available:
     breakdown_task        → break a task into 5 actionable steps
 
   Plans
-    create_plan           → create a multi-step plan
+    create_plan           → create a multi-step plan (optional goal_id)
     get_plan              → get plan details
     list_plans            → list active plans
     update_plan_step      → update step status/log attempt
     update_plan_status    → mark plan complete/abandoned
+    update_plan           → set or clear plan's linked goal
 
   Analytics (Phase 6)
     get_stats             → conversation usage statistics
@@ -173,7 +174,8 @@ TOOL_SCHEMAS: list[dict] = [
         "description": (
             "Retrieve the user's currently active goals from memory. "
             "Use this when the user asks what their goals are, what they're working on, "
-            "or wants a reminder of their priorities."
+            "or wants a reminder of their priorities. "
+            "Goals are outcomes (e.g. 'well-maintained home'); plans are multi-step projects under them."
         ),
         "input_schema": {
             "type": "object",
@@ -183,6 +185,12 @@ TOOL_SCHEMAS: list[dict] = [
                     "description": "Maximum number of goals to return (default 10).",
                     "minimum": 1,
                     "maximum": 50,
+                },
+                "include_plans": {
+                    "type": "boolean",
+                    "description": (
+                        "If true, show linked plans and step progress under each goal."
+                    ),
                 },
             },
             "required": [],
@@ -1117,7 +1125,9 @@ TOOL_SCHEMAS: list[dict] = [
         "name": "manage_goal",
         "description": (
             "Add, update, complete, abandon, or delete a goal. "
-            "Use this when the user says they've finished a goal, want to rename one, "
+            "Goals are outcomes (e.g. 'well-maintained home', 'finish certification') rather than "
+            "single tasks — prefer phrasing goals as outcomes when creating or refining. "
+            "Use when the user says they've finished a goal, want to rename one, "
             "add a new one manually, or remove one entirely. "
             "Call get_goals first to find the goal_id when modifying an existing goal."
         ),
@@ -1269,10 +1279,11 @@ TOOL_SCHEMAS: list[dict] = [
     {
         "name": "create_plan",
         "description": (
-            "Create a new multi-step plan. Use when the user describes a goal that has "
-            "discrete actions, may span days or weeks, or where individual steps may need "
-            "to be retried. Examples: 'make a plan to fix the fence', 'create a plan for "
-            "switching energy providers', 'I need to organise my tax return'."
+            "Create a new multi-step plan (project). Plans are multi-step projects; goals are "
+            "outcomes (e.g. link plan 'Fix laundry cupboard' to goal 'Well-maintained home'). "
+            "Use when the user describes discrete actions that may span days or weeks, or where "
+            "steps may need retrying. Examples: 'make a plan to fix the fence', 'create a plan for "
+            "switching energy providers'. Optionally link to a goal via goal_id (from get_goals)."
         ),
         "input_schema": {
             "type": "object",
@@ -1289,6 +1300,13 @@ TOOL_SCHEMAS: list[dict] = [
                     "type": "array",
                     "items": {"type": "string"},
                     "description": "Ordered list of step titles (e.g. ['Get quotes', 'Hire contractor', 'Supervise work']).",
+                },
+                "goal_id": {
+                    "type": "integer",
+                    "description": (
+                        "Optional goal ID to link this plan to (from get_goals). "
+                        "Goals are outcomes; linking helps show which plans serve which outcome."
+                    ),
                 },
             },
             "required": ["title", "steps"],
@@ -1392,6 +1410,31 @@ TOOL_SCHEMAS: list[dict] = [
                 },
             },
             "required": ["plan_id", "status"],
+        },
+    },
+    {
+        "name": "update_plan",
+        "description": (
+            "Set or clear a plan's linked goal (goal–plan hierarchy). "
+            "Use when the user wants to link a plan to an outcome (goal) or unlink it. "
+            "Goals are outcomes (e.g. 'well-maintained home'); plans are projects with steps. "
+            "Provide goal_id to link, or omit to clear the link."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "plan_id": {
+                    "type": "integer",
+                    "description": "The plan ID (from list_plans).",
+                },
+                "goal_id": {
+                    "type": "integer",
+                    "description": (
+                        "Goal ID to link (from get_goals). Omit to clear the plan's goal link."
+                    ),
+                },
+            },
+            "required": ["plan_id"],
         },
     },
     # ------------------------------------------------------------------ #

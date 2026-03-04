@@ -97,6 +97,14 @@ relay_post_message(
 
 ---
 
+## Goal vs plan
+
+- **Goal** = outcome (e.g. "well-maintained home", "finish certification"). Prefer creating or refining goals as outcomes, not single tasks.
+- **Plan** = multi-step project with ordered steps (tasks). Steps are the atomic actions.
+- **Link**: a plan can be linked to at most one goal (`goal_id`). Use this when it helps executive function — e.g. plan "Fix laundry cupboard" → goal "Well-maintained home". When listing goals, use `get_goals(include_plans=true)` to show linked plans and step progress; when listing plans, linked goal title is shown.
+
+---
+
 ## Summary of available tools
 
 | Tool | When to use |

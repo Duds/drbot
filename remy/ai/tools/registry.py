@@ -352,6 +352,10 @@ class ToolRegistry:
                     from .plans import exec_update_plan_status
 
                     return await exec_update_plan_status(self, tool_input, user_id)
+                case "update_plan":
+                    from .plans import exec_update_plan
+
+                    return await exec_update_plan(self, tool_input, user_id)
 
                 # Analytics
                 case "get_stats":

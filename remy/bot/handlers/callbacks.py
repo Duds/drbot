@@ -17,6 +17,8 @@ from zoneinfo import ZoneInfo
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
+from ...config import settings
+from ...relay import post_message_to_cowork
 from .base import is_allowed
 
 if TYPE_CHECKING:
@@ -371,9 +373,6 @@ def make_callback_handler(
                 if relay_post_message is not None:
                     ok = await relay_post_message(content=text)
                 else:
-                    from ...config import settings
-                    from ...relay import post_message_to_cowork
-
                     ok = await post_message_to_cowork(
                         content=text,
                         db_path=settings.relay_db_path_resolved,
@@ -446,7 +445,6 @@ def make_callback_handler(
                 except Exception:
                     pass
                 return
-            from ...config import settings
 
             tz = ZoneInfo(settings.scheduler_timezone)
             fire_at = datetime.now(tz) + timedelta(minutes=minutes)
@@ -491,8 +489,6 @@ def make_callback_handler(
                 except Exception:
                     pass
                 return
-
-            from ...config import settings
 
             tz = ZoneInfo(settings.scheduler_timezone)
             fire_at = datetime.now(tz) + timedelta(minutes=minutes)

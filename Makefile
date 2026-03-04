@@ -1,6 +1,6 @@
 .PHONY: run test test-cov lint build docker-run docker-stop setup db db-init \
         deploy deploy-update deploy-logs deploy-delete health \
-        relay-up relay-run relay-stop relay-check relay-setup-check \
+        relay-up relay-run relay-stop relay-check relay-setup-check relay-verify \
         install-launchd uninstall-launchd \
         tunnel-up tunnel-stop tunnel-logs telemetry logs
 
@@ -58,6 +58,11 @@ relay-check:
 relay-setup-check: relay-check
 	@command -v uvx >/dev/null 2>&1 || (echo "uv not found — install with: brew install uv"; exit 1)
 	@echo "relay setup OK — relay running, uv available"
+
+# Run relay tests (shared-DB E2E: remy↔cowork delivery on one DB). Use 'make relay-verify' or 'make relay'.
+relay-verify:
+	$(PYTHON) -m pytest tests/test_tools/test_relay.py -v
+relay: relay-verify
 
 # ── LaunchAgent (start at login) ───────────────────────────────────────────────
 # Install LaunchAgent so remy + relay + ollama start when you log in
