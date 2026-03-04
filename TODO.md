@@ -1,6 +1,6 @@
 # Remy Roadmap & Development Plan
 
-**Last Updated:** March 4, 2026 (Round-trip latency user stories, Bug fixes 35–38)
+**Last Updated:** March 4, 2026 (US-gmail-create-label closed, slash command + doc)
 
 ## 🎯 Philosophy: Simplicity > Complexity
 
@@ -380,7 +380,7 @@ Combines Telegram Bot API (inline keyboards, callbacks, chat actions) with Claud
 - [x] **Conversational briefing via Remy** (`US-conversational-briefing-via-remy`) — Morning briefing composed by Remy from structured data; Australian dates; natural voice. See `docs/backlog/US-conversational-briefing-via-remy.md`.
 - [x] **Calendar quick add** (`US-calendar-quick-add`) — [Add to calendar] on event mentions in briefings/summaries.
 - [x] **Send to cowork** (`US-send-to-cowork`) — [Send to cowork] on notes/summaries for one-tap relay handoff.
-- [ ] **Chat actions for long tasks** — `upload_document` / `upload_photo` when research/board runs (instead of only `typing`).
+- [x] **Chat actions for long tasks** — `upload_document` / `upload_photo` when research/board runs (instead of only `typing`).
 - [ ] **Run again / different params** — [Run again] [New topic] on tool-heavy flows (research, board, Gmail quick wins).
 - [ ] **Document/photo action buttons** — [Summarise] [Extract tasks] [Save] on attachments.
 
@@ -444,6 +444,7 @@ These were in my-agent and caused bloat. **Do not implement.**
 | **M**    | BackgroundTaskRunner (fire-and-forget)                             | US-background-task-runner           | ✅ Done                      |
 | **S**    | Persistent job tracking + `/jobs`                                  | US-persistent-job-tracking          | ✅ Done                      |
 | **S**    | Gmail label/folder search                                          | US-gmail-label-search               | ✅ Done                      |
+| **S**    | Gmail create label (tool + slash command)                          | US-gmail-create-label              | ✅ Done                      |
 | **S**    | Analytics: per-call token capture                                  | US-analytics-token-capture          | ✅ Done                      |
 | **S**    | Analytics: API call log + latency                                  | US-analytics-call-log               | ✅ Done                      |
 | **S**    | Analytics: `/costs` command                                        | US-analytics-costs-command          | ✅ Done                      |
@@ -635,15 +636,13 @@ Phase 2.1 gave Dale a `/write` command to write files via a two-step flow. What 
 
 ---
 
-## 🏷️ Pending: Gmail Label Creation
+## 🏷️ Gmail Label Creation ✅
 
-- [x] **Add `create_gmail_label` tool**
-  - Gap identified: Remy can list and apply labels but cannot create new ones
-  - Implement via Gmail API: `POST /gmail/v1/users/me/labels`
-  - Support nested labels (e.g. `4-Personal & Family/Hockey`) by setting `name` to the full path string
-  - Add tool schema to `TOOL_SCHEMAS` in `tool_registry.py`
-  - Natural language: "create a label called Hockey under Personal & Family"
-  - Use case: on-the-fly label creation during email triage sessions
+- [x] **Add `create_gmail_label` tool** — Done. See `docs/backlog/US-gmail-create-label.md`.
+  - Tool: `create_gmail_label` (schema in `schemas.py`, executor in `email.py`); Gmail API `POST .../labels` in `remy/google/gmail.py`.
+  - Nested labels via slash in `name` (e.g. `4-Personal & Family/Hockey`).
+  - Natural language: "create a label called Hockey under Personal & Family".
+  - Slash command: `/gmail_create_label <name>` (handlers/email.py, telegram_bot.py, help in core.py).
 
 ---
 
@@ -762,3 +761,46 @@ The US covers adding relay tools to Remy's ToolRegistry so the channel is truly 
 
 Audit the relay MCP server transport before implementing — if it's SQLite direct-access, use that.
 If HTTP, use httpx. See US for full detail.
+
+---
+
+## 🗂️ US: Google Drive Mount RAG Indexing
+
+**Added:** March 2026
+**Backlog ref:** `US-google-drive-rag-indexing` → `docs/backlog/US-google-drive-rag-indexing.md`
+**Priority:** C (Could Have)
+**Phase:** 2 — File & Workspace Integration (extension)
+
+### Problem
+
+Remy's RAG file index only covers `~/Projects`, `~/Documents`, and `~/Downloads`. Dale's Google Drive is mounted locally (path TBC — e.g. `~/GoogleDrive` or `/mnt/gdrive`) and contains important personal documents including CVs, contracts, and other reference material. These are invisible to Remy's file search.
+
+### Goal
+
+Extend the RAG indexer to optionally include one or more configured Google Drive mount paths, so that Remy can search and retrieve content from Drive-mounted files just like local files.
+
+### Proposed Approach
+
+- Add a `GDRIVE_MOUNT_PATHS` env var (comma-separated list of mount paths to index, e.g. `~/GoogleDrive`)
+- Validate that each configured path exists and is readable at startup; log a warning if not (Drive may be unmounted)
+- Treat configured mount paths as additional allowed base directories in the RAG indexer — same chunking, embedding, and retrieval pipeline
+- Add mount paths to the `index_status` tool output so Dale can see what's indexed
+- Guard `read_file` and file search tools to also permit reads from configured mount paths
+- Re-index on demand via `trigger_reindex` (existing tool); no real-time watch needed (Drive sync handles freshness)
+
+### Acceptance Criteria
+
+- [ ] `GDRIVE_MOUNT_PATHS` env var accepted and validated at startup
+- [ ] Files under configured mount path(s) are indexed by the RAG pipeline
+- [ ] `search_files` returns results from Drive-mounted files
+- [ ] `read_file` can open files from the mount path (path validation updated)
+- [ ] `index_status` reports the Drive mount path(s) and file count
+- [ ] If the mount is not available at startup, Remy logs a warning and continues (graceful degradation)
+- [ ] Actual mount path confirmed with Dale before implementation
+
+### Notes
+
+- Mount path needs to be confirmed — Dale to advise exact path (e.g. `~/GoogleDrive`, `/mnt/gdrive`)
+- No new dependencies expected — same indexer, additional allowed base dirs
+- Security: path traversal protections already in place; mount path added to allowlist explicitly
+- Out of scope: real-time Drive sync watching, Google Drive API indexing (cloud-only files)
