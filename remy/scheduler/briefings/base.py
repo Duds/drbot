@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from ...memory.file_index import FileIndexer
     from ...google.calendar import CalendarClient
     from ...google.contacts import ContactsClient
+    from ...google.gmail import GmailClient
     from ...ai.claude_client import ClaudeClient
     from ...analytics.analyzer import ConversationAnalyzer
 
@@ -41,6 +42,7 @@ class BriefingGenerator(ABC):
         fact_store: "FactStore | None" = None,
         calendar: "CalendarClient | None" = None,
         contacts: "ContactsClient | None" = None,
+        gmail: "GmailClient | None" = None,
         file_indexer: "FileIndexer | None" = None,
         claude: "ClaudeClient | None" = None,
         conversation_analyzer: "ConversationAnalyzer | None" = None,
@@ -51,6 +53,7 @@ class BriefingGenerator(ABC):
         self._fact_store = fact_store
         self._calendar = calendar
         self._contacts = contacts
+        self._gmail = gmail
         self._file_indexer = file_indexer
         self._claude = claude
         self._conversation_analyzer = conversation_analyzer

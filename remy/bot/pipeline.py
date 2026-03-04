@@ -245,7 +245,8 @@ async def run_proactive_trigger(
         # ------------------------------------------------------------------ #
         # 4b. Attach keyboard to message                                      #
         #     Reminders: [Snooze 5m] [Snooze 15m] [Done]                       #
-        #     Briefings: [Add to calendar] per event (US-calendar-quick-add)    #
+        #     Briefings: [Add to calendar] only for suggested_events (US-proactive-buttons-decisions-only)
+        #     context["calendar"] = existing events (informational, no buttons) #
         # ------------------------------------------------------------------ #
         if context is None:
             try:
@@ -269,17 +270,16 @@ async def run_proactive_trigger(
                 )
             except Exception as e:
                 logger.debug("Could not attach reminder keyboard: %s", e)
-        elif context and (cal := context.get("calendar")):
-            # US-calendar-quick-add: [Add to calendar] buttons for each event
+        elif context and (suggested := context.get("suggested_events")):
+            # Decisions only: [Add to calendar] only for suggested events to add, not existing calendar
             try:
                 from .handlers.callbacks import make_suggested_actions_keyboard
 
                 actions = []
-                for item in cal[:4]:  # Max 4 buttons (keyboard limit)
+                for item in (suggested or [])[:4]:  # Max 4 buttons (keyboard limit)
                     when = item.get("when")
                     title = (item.get("title") or "Event").strip()
                     if when and title:
-                        # Shorten label for Telegram (32 chars)
                         label = f"📅 {title}"[:32]
                         actions.append(
                             {
@@ -298,7 +298,8 @@ async def run_proactive_trigger(
                         )
             except Exception as e:
                 logger.debug(
-                    "Could not attach [Add to calendar] keyboard to briefing: %s", e
+                    "Could not attach [Add to calendar] keyboard for suggested_events: %s",
+                    e,
                 )
 
         # ------------------------------------------------------------------ #

@@ -22,32 +22,56 @@ _BODY_MAX_CHARS = 3000  # truncation limit for email bodies
 # Maps human-readable label names → Gmail API label IDs.
 # None means "no labelIds filter" (i.e. search all mail).
 _SYSTEM_LABELS: dict[str, str | None] = {
-    "INBOX":      "INBOX",
-    "ALL_MAIL":   None,
-    "SENT":       "SENT",
-    "TRASH":      "TRASH",
-    "SPAM":       "SPAM",
+    "INBOX": "INBOX",
+    "ALL_MAIL": None,
+    "SENT": "SENT",
+    "TRASH": "TRASH",
+    "SPAM": "SPAM",
     "PROMOTIONS": "CATEGORY_PROMOTIONS",
-    "UPDATES":    "CATEGORY_UPDATES",
-    "FORUMS":     "CATEGORY_FORUMS",
-    "SOCIAL":     "CATEGORY_SOCIAL",
-    "PERSONAL":   "CATEGORY_PERSONAL",
+    "UPDATES": "CATEGORY_UPDATES",
+    "FORUMS": "CATEGORY_FORUMS",
+    "SOCIAL": "CATEGORY_SOCIAL",
+    "PERSONAL": "CATEGORY_PERSONAL",
 }
 
+# Label IDs for "primary tabs" (Inbox + Promotions + Updates) for unread scope.
+PRIMARY_TABS_LABEL_IDS: list[str] = [
+    "INBOX",
+    "CATEGORY_PROMOTIONS",
+    "CATEGORY_UPDATES",
+]
+
 # Keywords that suggest a promotional / newsletter email
-_PROMO_KEYWORDS = frozenset({
-    "unsubscribe", "newsletter", "marketing", "promotion", "sale", "deal",
-    "offer", "discount", "coupon", "% off", "free shipping", "limited time",
-    "act now", "special offer", "click here", "opt out",
-})
+_PROMO_KEYWORDS = frozenset(
+    {
+        "unsubscribe",
+        "newsletter",
+        "marketing",
+        "promotion",
+        "sale",
+        "deal",
+        "offer",
+        "discount",
+        "coupon",
+        "% off",
+        "free shipping",
+        "limited time",
+        "act now",
+        "special offer",
+        "click here",
+        "opt out",
+    }
+)
 
 
 def _is_promotional(email: dict) -> bool:
     """Heuristic: check subject + snippet for promotional keywords."""
     text = (
-        email.get("subject", "") + " " +
-        email.get("snippet", "") + " " +
-        email.get("from_addr", "")
+        email.get("subject", "")
+        + " "
+        + email.get("snippet", "")
+        + " "
+        + email.get("from_addr", "")
     ).lower()
     return any(kw in text for kw in _PROMO_KEYWORDS)
 
@@ -57,13 +81,16 @@ def _extract_body(msg: dict, max_chars: int = _BODY_MAX_CHARS) -> str:
     Extract plain-text body from a Gmail full-format message.
     Falls back to the snippet if no plain-text part is found.
     """
+
     def _get_plain(part: dict) -> str:
         mime = part.get("mimeType", "")
         if mime == "text/plain":
             data = part.get("body", {}).get("data", "")
             if data:
                 try:
-                    return base64.urlsafe_b64decode(data + "==").decode("utf-8", errors="replace")
+                    return base64.urlsafe_b64decode(data + "==").decode(
+                        "utf-8", errors="replace"
+                    )
                 except Exception as e:
                     logger.debug("Failed to decode email body base64: %s", e)
         # Recurse into multipart
@@ -81,10 +108,7 @@ def _extract_body(msg: dict, max_chars: int = _BODY_MAX_CHARS) -> str:
 
 def _parse_headers(msg: dict) -> dict:
     """Return a dict of {header_name: value} from a Gmail message."""
-    return {
-        h["name"]: h["value"]
-        for h in msg.get("payload", {}).get("headers", [])
-    }
+    return {h["name"]: h["value"] for h in msg.get("payload", {}).get("headers", [])}
 
 
 class GmailClient:
@@ -96,34 +120,122 @@ class GmailClient:
     def _service(self):
         from googleapiclient.discovery import build  # type: ignore[import]
         from .auth import get_credentials
+
         return build("gmail", "v1", credentials=get_credentials(self._token_file))
 
     # ------------------------------------------------------------------
     # Read / search
     # ------------------------------------------------------------------
 
-    async def get_unread(self, limit: int = 5) -> list[dict]:
+    async def get_unread(
+        self,
+        limit: int = 5,
+        label_ids: list[str | None] | None = None,
+    ) -> list[dict]:
         """
-        Return up to `limit` unread inbox email summaries (metadata only).
-        Each dict has: id, from_addr, subject, date, snippet, labels.
+        Return up to `limit` unread email summaries (metadata only).
+
+        When label_ids is None, uses INBOX only (backwards-compatible).
+        When label_ids is provided, fetches unread from those labels (or all mail
+        if the list contains None). Each dict has: id, from_addr, subject,
+        date, snippet, labels.
         """
-        return await self.search("is:unread in:inbox", max_results=limit)
+        if label_ids is None:
+            return await self.search("is:unread in:inbox", max_results=limit)
+        return await self.search(
+            "is:unread",
+            max_results=limit,
+            label_ids=label_ids,
+        )
 
-    async def get_unread_count(self) -> int:
-        """Return total unread count in inbox."""
-        def _sync():
-            result = self._service().users().labels().get(
-                userId="me", id="INBOX"
-            ).execute()
-            return result.get("messagesUnread", 0)
-        return await with_google_resilience("gmail", lambda: asyncio.to_thread(_sync))
+    async def get_unread_count(
+        self,
+        label_ids: list[str | None] | None = None,
+    ) -> int:
+        """
+        Return total unread count for the given scope.
 
-    async def get_unread_summary(self) -> dict:
-        """Return {count, senders} for unread inbox."""
-        count = await self.get_unread_count()
+        When label_ids is None: returns INBOX unread count only (Labels API).
+        When label_ids is [None] or contains None: one search across all mail,
+        returns resultSizeEstimate.
+        When label_ids is a list of label IDs: queries each label separately
+        and returns the number of unique message IDs (no double-counting).
+        """
+
+        if label_ids is None:
+
+            def _sync_inbox():
+                result = (
+                    self._service()
+                    .users()
+                    .labels()
+                    .get(userId="me", id="INBOX")
+                    .execute()
+                )
+                return result.get("messagesUnread", 0)
+
+            return await with_google_resilience(
+                "gmail", lambda: asyncio.to_thread(_sync_inbox)
+            )
+
+        if None in label_ids or label_ids == [None]:
+
+            def _sync_all():
+                resp = (
+                    self._service()
+                    .users()
+                    .messages()
+                    .list(userId="me", q="is:unread", maxResults=1)
+                    .execute()
+                )
+                return resp.get("resultSizeEstimate", 0)
+
+            return await with_google_resilience(
+                "gmail", lambda: asyncio.to_thread(_sync_all)
+            )
+
+        # Multiple labels: list each and merge unique message IDs
+        def _sync_multi():
+            svc = self._service()
+            seen: set[str] = set()
+            for lid in label_ids:
+                if lid is None:
+                    continue
+                resp = (
+                    svc.users()
+                    .messages()
+                    .list(
+                        userId="me",
+                        q="is:unread",
+                        labelIds=[lid],
+                        maxResults=500,
+                    )
+                    .execute()
+                )
+                for m in resp.get("messages", []):
+                    seen.add(m["id"])
+            return len(seen)
+
+        return await with_google_resilience(
+            "gmail", lambda: asyncio.to_thread(_sync_multi)
+        )
+
+    async def get_unread_summary(
+        self,
+        label_ids: list[str | None] | None = None,
+    ) -> dict:
+        """
+        Return {count, senders} for unread mail in the given scope.
+
+        Uses get_unread_count and get_unread with the same label_ids.
+        """
+        count = await self.get_unread_count(label_ids=label_ids)
         if count == 0:
             return {"count": 0, "senders": []}
-        emails = await self.get_unread(limit=min(count, 20))
+        emails = await self.get_unread(
+            limit=min(count, 20),
+            label_ids=label_ids,
+        )
         senders = list({e["from_addr"] for e in emails})[:10]
         return {"count": count, "senders": senders}
 
@@ -207,13 +319,21 @@ class GmailClient:
                         continue
                     seen.add(item["id"])
                     fmt = "full" if include_body else "metadata"
-                    msg = svc.users().messages().get(
-                        userId="me",
-                        id=item["id"],
-                        format=fmt,
-                        **({"metadataHeaders": ["From", "To", "Subject", "Date"]}
-                           if not include_body else {}),
-                    ).execute()
+                    msg = (
+                        svc.users()
+                        .messages()
+                        .get(
+                            userId="me",
+                            id=item["id"],
+                            format=fmt,
+                            **(
+                                {"metadataHeaders": ["From", "To", "Subject", "Date"]}
+                                if not include_body
+                                else {}
+                            ),
+                        )
+                        .execute()
+                    )
                     headers = _parse_headers(msg)
                     entry = {
                         "id": item["id"],
@@ -237,14 +357,20 @@ class GmailClient:
         Fetch a single email by ID.
         Returns full metadata plus plain-text body (if include_body=True).
         """
+
         def _sync():
             svc = self._service()
             fmt = "full" if include_body else "metadata"
-            msg = svc.users().messages().get(
-                userId="me",
-                id=message_id,
-                format=fmt,
-            ).execute()
+            msg = (
+                svc.users()
+                .messages()
+                .get(
+                    userId="me",
+                    id=message_id,
+                    format=fmt,
+                )
+                .execute()
+            )
             headers = _parse_headers(msg)
             entry = {
                 "id": message_id,
@@ -267,12 +393,14 @@ class GmailClient:
 
     async def list_labels(self) -> list[dict]:
         """Return all Gmail labels (system + user-created)."""
+
         def _sync():
             result = self._service().users().labels().list(userId="me").execute()
             return [
                 {"id": lbl["id"], "name": lbl["name"], "type": lbl.get("type", "user")}
                 for lbl in result.get("labels", [])
             ]
+
         return await with_google_resilience("gmail", lambda: asyncio.to_thread(_sync))
 
     async def create_label(
@@ -288,6 +416,7 @@ class GmailClient:
         Use slash notation for nesting, e.g. 'Personal/Hockey' creates a
         'Hockey' label nested under an existing 'Personal' parent label.
         """
+
         def _sync():
             svc = self._service()
             body = {
@@ -318,9 +447,7 @@ class GmailClient:
         def _sync():
             svc = self._service()
             for mid in message_ids:
-                svc.users().messages().modify(
-                    userId="me", id=mid, body=body
-                ).execute()
+                svc.users().messages().modify(userId="me", id=mid, body=body).execute()
             return len(message_ids)
 
         return await with_google_resilience("gmail", lambda: asyncio.to_thread(_sync))
@@ -359,10 +486,15 @@ class GmailClient:
 
             raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("utf-8")
             svc = self._service()
-            draft = svc.users().drafts().create(
-                userId="me",
-                body={"message": {"raw": raw}},
-            ).execute()
+            draft = (
+                svc.users()
+                .drafts()
+                .create(
+                    userId="me",
+                    body={"message": {"raw": raw}},
+                )
+                .execute()
+            )
             return {
                 "id": draft["id"],
                 "message_id": draft.get("message", {}).get("id", ""),

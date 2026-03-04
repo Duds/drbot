@@ -17,6 +17,7 @@ from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ...config import settings
+from ...google.gmail import PRIMARY_TABS_LABEL_IDS
 from .base import BriefingGenerator
 
 logger = logging.getLogger(__name__)
@@ -147,6 +148,11 @@ class MorningBriefingGenerator(BriefingGenerator):
         else:
             payload["calendar"] = []
 
+        # US-proactive-buttons-decisions-only: events to add (not yet on calendar).
+        # Pipeline attaches [Add to calendar] only for suggested_events. Leave empty
+        # until we have a source (e.g. calendar-invite emails, meeting requests).
+        payload["suggested_events"] = []
+
         if self._fact_store:
             try:
                 project_facts = await self._fact_store.get_by_category(
@@ -217,6 +223,31 @@ class MorningBriefingGenerator(BriefingGenerator):
                 payload["stale_plans"] = []
         else:
             payload["stale_plans"] = []
+
+        # Unread email (US-gmail-check-all-mail): scope from settings
+        scope = getattr(settings, "briefing_email_scope", "inbox_only") or "inbox_only"
+        if self._gmail:
+            try:
+                if scope == "all_mail":
+                    label_ids: list[str | None] | None = [None]
+                    scope_desc = "all mail"
+                elif scope == "primary_tabs":
+                    label_ids = PRIMARY_TABS_LABEL_IDS
+                    scope_desc = "Inbox, Promotions, and Updates"
+                else:
+                    label_ids = None
+                    scope_desc = "Inbox"
+                data = await self._gmail.get_unread_summary(label_ids=label_ids)
+                payload["unread_email"] = {
+                    "count": data.get("count", 0),
+                    "senders": data.get("senders", [])[:5],
+                    "scope": scope_desc,
+                }
+            except Exception as e:
+                logger.debug("Could not load unread email for briefing: %s", e)
+                payload["unread_email"] = {"count": 0, "senders": [], "scope": ""}
+        else:
+            payload["unread_email"] = {"count": 0, "senders": [], "scope": ""}
 
         # Relay inbox (US-claude-desktop-relay)
         try:

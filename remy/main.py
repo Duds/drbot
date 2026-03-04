@@ -362,6 +362,7 @@ def main() -> None:
             fact_store,
             google_calendar,
             google_contacts,
+            gmail_client=google_gmail,
             automation_store=automation_store,
             claude_client=claude_client,
             conversation_analyzer=conv_analyzer,

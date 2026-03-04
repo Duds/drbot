@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from remy.google.gmail import PRIMARY_TABS_LABEL_IDS
 from remy.ai.tools.email import (
     exec_classify_promotional_emails,
     exec_create_email_draft,
@@ -41,9 +42,37 @@ class TestExecReadEmails:
         gmail = AsyncMock()
         gmail.get_unread = AsyncMock(return_value=[])
         registry = make_registry(gmail=gmail)
-        
+
         result = await exec_read_emails(registry, {})
         assert isinstance(result, str)
+
+    @pytest.mark.asyncio
+    async def test_scope_inbox_default(self):
+        """With no scope, should use Inbox and report 'Inbox' in the message."""
+        gmail = AsyncMock()
+        gmail.get_unread_summary = AsyncMock(return_value={"count": 0, "senders": []})
+        registry = make_registry(gmail=gmail)
+
+        result = await exec_read_emails(registry, {"summary_only": True})
+        assert "Inbox" in result
+        gmail.get_unread_summary.assert_called_once_with(label_ids=None)
+
+    @pytest.mark.asyncio
+    async def test_scope_primary_tabs(self):
+        """With scope primary_tabs, should pass primary tabs label IDs."""
+        gmail = AsyncMock()
+        gmail.get_unread_summary = AsyncMock(
+            return_value={"count": 5, "senders": ["a@x.com", "b@x.com"]}
+        )
+        registry = make_registry(gmail=gmail)
+
+        result = await exec_read_emails(
+            registry, {"summary_only": True, "scope": "primary_tabs"}
+        )
+        assert "Promotions" in result or "Updates" in result
+        gmail.get_unread_summary.assert_called_once_with(
+            label_ids=PRIMARY_TABS_LABEL_IDS
+        )
 
 
 class TestExecSearchGmail:
@@ -61,7 +90,7 @@ class TestExecSearchGmail:
         """Should require a search query."""
         gmail = AsyncMock()
         registry = make_registry(gmail=gmail)
-        
+
         result = await exec_search_gmail(registry, {"query": ""})
         assert "provide" in result.lower() or "query" in result.lower()
 
@@ -71,7 +100,7 @@ class TestExecSearchGmail:
         gmail = AsyncMock()
         gmail.search = AsyncMock(return_value=[])
         registry = make_registry(gmail=gmail)
-        
+
         result = await exec_search_gmail(registry, {"query": "test"})
         assert isinstance(result, str)
 
@@ -91,7 +120,7 @@ class TestExecReadEmail:
         """Should require a message ID."""
         gmail = AsyncMock()
         registry = make_registry(gmail=gmail)
-        
+
         result = await exec_read_email(registry, {"message_id": ""})
         assert "provide" in result.lower() or "message" in result.lower()
 
@@ -112,7 +141,7 @@ class TestExecListGmailLabels:
         gmail = AsyncMock()
         gmail.list_labels = AsyncMock(return_value=[])
         registry = make_registry(gmail=gmail)
-        
+
         result = await exec_list_gmail_labels(registry, {})
         assert isinstance(result, str)
 
@@ -124,7 +153,9 @@ class TestExecLabelEmails:
     async def test_no_gmail_returns_not_configured(self):
         """Should return not configured when Gmail not set up."""
         registry = make_registry(gmail=None)
-        result = await exec_label_emails(registry, {"message_ids": ["123"], "label": "Work"})
+        result = await exec_label_emails(
+            registry, {"message_ids": ["123"], "label": "Work"}
+        )
         assert "not configured" in result.lower()
 
     @pytest.mark.asyncio
@@ -132,7 +163,7 @@ class TestExecLabelEmails:
         """Should require message IDs."""
         gmail = AsyncMock()
         registry = make_registry(gmail=gmail)
-        
+
         result = await exec_label_emails(registry, {"message_ids": [], "label": "Work"})
         assert "provide" in result.lower() or "message" in result.lower()
 
@@ -152,7 +183,7 @@ class TestExecCreateGmailLabel:
         """Should require a label name."""
         gmail = AsyncMock()
         registry = make_registry(gmail=gmail)
-        
+
         result = await exec_create_gmail_label(registry, {"name": ""})
         assert "provide" in result.lower() or "name" in result.lower()
 
@@ -172,9 +203,13 @@ class TestExecCreateEmailDraft:
         """Should require a recipient."""
         gmail = AsyncMock()
         registry = make_registry(gmail=gmail)
-        
+
         result = await exec_create_email_draft(registry, {"to": ""})
-        assert "provide" in result.lower() or "recipient" in result.lower() or "to" in result.lower()
+        assert (
+            "provide" in result.lower()
+            or "recipient" in result.lower()
+            or "to" in result.lower()
+        )
 
 
 class TestExecClassifyPromotionalEmails:
@@ -193,6 +228,6 @@ class TestExecClassifyPromotionalEmails:
         gmail = AsyncMock()
         gmail.classify_promotional = AsyncMock(return_value=[])
         registry = make_registry(gmail=gmail)
-        
+
         result = await exec_classify_promotional_emails(registry, {})
         assert isinstance(result, str)

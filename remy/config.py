@@ -79,6 +79,8 @@ class Settings(BaseSettings):
     briefing_cron: str = "0 7 * * *"
     checkin_cron: str = "0 19 * * *"
     scheduler_timezone: str = "Australia/Sydney"
+    # Morning briefing email scope: inbox_only | primary_tabs | all_mail (US-gmail-check-all-mail)
+    briefing_email_scope: str = "inbox_only"
 
     # SOUL.md path
     soul_md_path: str = "config/SOUL.md"

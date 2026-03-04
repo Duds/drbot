@@ -6,6 +6,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from ...ai.input_validator import sanitize_memory_injection
+from ...google.gmail import PRIMARY_TABS_LABEL_IDS
 
 if TYPE_CHECKING:
     from .registry import ToolRegistry
@@ -13,33 +14,49 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _scope_to_label_ids_and_description(
+    scope: str,
+) -> tuple[list[str | None] | None, str]:
+    """Map read_emails scope to (label_ids for GmailClient, human scope description)."""
+    scope = (scope or "inbox").strip().lower()
+    if scope == "inbox" or not scope:
+        return None, "Inbox"
+    if scope == "primary_tabs":
+        return PRIMARY_TABS_LABEL_IDS, "Inbox, Promotions, and Updates"
+    if scope == "all_mail":
+        return [None], "all mail"
+    return None, "Inbox"
+
+
 async def exec_read_emails(registry: ToolRegistry, inp: dict) -> str:
-    """Fetch unread emails from Gmail."""
+    """Fetch unread emails from Gmail, optionally beyond Inbox."""
     if registry._gmail is None:
         return "Gmail not configured. Run scripts/setup_google_auth.py to set it up."
     summary_only = bool(inp.get("summary_only", False))
     limit = min(int(inp.get("limit", 5)), 20)
+    label_ids, scope_desc = _scope_to_label_ids_and_description(
+        inp.get("scope") or "inbox"
+    )
 
     try:
         if summary_only:
-            data = await registry._gmail.get_unread_summary()
-            count = data.get("total_unread", 0)
-            top_senders = data.get("top_senders", [])
+            data = await registry._gmail.get_unread_summary(label_ids=label_ids)
+            count = data.get("count", 0)
+            senders = data.get("senders", [])
             if not count:
-                return "Inbox is clear — no unread emails."
-            sender_str = ", ".join(top_senders[:5]) if top_senders else "various"
-            return f"Unread emails: {count}\nTop senders: {sender_str}"
-        else:
-            emails = await registry._gmail.get_unread(limit=limit)
-            if not emails:
-                return "No unread emails."
-            lines = [f"Unread emails ({len(emails)}):"]
-            for m in emails:
-                subj = sanitize_memory_injection(m.get("subject", "(no subject)"))
-                sender = sanitize_memory_injection(m.get("from_addr", "unknown"))
-                snippet = sanitize_memory_injection((m.get("snippet") or "")[:150])
-                lines.append(f"• From: {sender}\n  Subject: {subj}\n  {snippet}")
-            return "\n\n".join(lines)
+                return f"No unread emails in {scope_desc}."
+            sender_str = ", ".join(senders[:5]) if senders else "various"
+            return f"Unread in {scope_desc}: {count}\nTop senders: {sender_str}"
+        emails = await registry._gmail.get_unread(limit=limit, label_ids=label_ids)
+        if not emails:
+            return f"No unread emails in {scope_desc}."
+        lines = [f"Unread in {scope_desc} ({len(emails)} shown):"]
+        for m in emails:
+            subj = sanitize_memory_injection(m.get("subject", "(no subject)"))
+            sender = sanitize_memory_injection(m.get("from_addr", "unknown"))
+            snippet = sanitize_memory_injection((m.get("snippet") or "")[:150])
+            lines.append(f"• From: {sender}\n  Subject: {subj}\n  {snippet}")
+        return "\n\n".join(lines)
     except Exception as e:
         return f"Could not fetch emails: {e}"
 

@@ -14,6 +14,7 @@ from telegram.ext import ContextTypes
 
 from .base import reject_unauthorized, google_not_configured
 from .callbacks import store_pending_archive, make_archive_keyboard
+from ...google.gmail import PRIMARY_TABS_LABEL_IDS
 
 if TYPE_CHECKING:
     from ...google.gmail import GmailClient
@@ -32,7 +33,7 @@ def make_email_handlers(
     """
 
     async def gmail_unread_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """/gmail-unread [limit=5] — show and summarise unread inbox emails."""
+        """/gmail-unread [limit=5] [--tabs|--all] — show unread emails (Inbox by default)."""
         if update.message is None or update.effective_user is None:
             return
         if await reject_unauthorized(update):
@@ -40,24 +41,40 @@ def make_email_handlers(
         if google_gmail is None:
             await update.message.reply_text(google_not_configured("Gmail"))
             return
+        args = list(context.args or [])
+        use_tabs = "--tabs" in args
+        use_all = "--all" in args
+        if use_tabs:
+            args = [a for a in args if a != "--tabs"]
+        if use_all:
+            args = [a for a in args if a != "--all"]
         try:
-            limit = int(context.args[0]) if context.args else 5
+            limit = int(args[0]) if args else 5
             limit = max(1, min(limit, 20))
         except (ValueError, IndexError):
             limit = 5
+        if use_all:
+            label_ids: list[str | None] | None = [None]
+            scope_label = "all mail"
+        elif use_tabs:
+            label_ids = PRIMARY_TABS_LABEL_IDS
+            scope_label = "Inbox, Promotions, and Updates"
+        else:
+            label_ids = None
+            scope_label = "Inbox"
         await update.message.reply_text("📬 Fetching unread emails…")
         err: Exception | None = None
         try:
-            emails = await google_gmail.get_unread(limit=limit)
+            emails = await google_gmail.get_unread(limit=limit, label_ids=label_ids)
         except Exception as exc:
             err = exc
         if err is not None:
             await update.message.reply_text(f"❌ Gmail error: {err}")
             return
         if not emails:
-            await update.message.reply_text("📬 No unread emails in inbox.")
+            await update.message.reply_text(f"📬 No unread emails in {scope_label}.")
             return
-        lines = [f"📬 *Unread emails ({len(emails)} shown):*\n"]
+        lines = [f"📬 *Unread in {scope_label} ({len(emails)} shown):*\n"]
         for i, email in enumerate(emails, 1):
             subject = email["subject"][:80]
             sender = email["from_addr"][:60]
@@ -71,7 +88,7 @@ def make_email_handlers(
     async def gmail_unread_summary_command(
         update: Update, context: ContextTypes.DEFAULT_TYPE
     ):
-        """/gmail-unread-summary — total unread count and top senders."""
+        """/gmail-unread-summary [--tabs|--all] — total unread count and top senders."""
         if update.message is None or update.effective_user is None:
             return
         if await reject_unauthorized(update):
@@ -79,10 +96,22 @@ def make_email_handlers(
         if google_gmail is None:
             await update.message.reply_text(google_not_configured("Gmail"))
             return
-        await update.message.reply_text("📬 Checking inbox…")
+        args = list(context.args or [])
+        use_tabs = "--tabs" in args
+        use_all = "--all" in args
+        if use_all:
+            label_ids: list[str | None] | None = [None]
+            scope_label = "all mail"
+        elif use_tabs:
+            label_ids = PRIMARY_TABS_LABEL_IDS
+            scope_label = "Inbox, Promotions, and Updates"
+        else:
+            label_ids = None
+            scope_label = "Inbox"
+        await update.message.reply_text(f"📬 Checking {scope_label}…")
         err: Exception | None = None
         try:
-            summary = await google_gmail.get_unread_summary()
+            summary = await google_gmail.get_unread_summary(label_ids=label_ids)
         except Exception as exc:
             err = exc
         if err is not None:
@@ -90,12 +119,12 @@ def make_email_handlers(
             return
         count = summary["count"]
         if count == 0:
-            await update.message.reply_text("📬 Inbox is clear — no unread emails.")
+            await update.message.reply_text(f"📬 No unread emails in {scope_label}.")
             return
         senders = summary["senders"]
         sender_lines = "\n".join(f"  • {s}" for s in senders[:8])
         await update.message.reply_text(
-            f"📬 *{count} unread email(s)*\n\nTop senders:\n{sender_lines}",
+            f"📬 *{count} unread in {scope_label}*\n\nTop senders:\n{sender_lines}",
             parse_mode="Markdown",
         )
 

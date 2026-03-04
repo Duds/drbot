@@ -309,7 +309,11 @@ TOOL_SCHEMAS: list[dict] = [
         "name": "read_emails",
         "description": (
             "Fetch unread emails from Gmail. "
-            "Use this when the user asks about new emails, their inbox, or what emails they have."
+            "Use this when the user asks about new emails, their inbox, or what emails they have. "
+            "Use scope 'inbox' (default) for Inbox only. Use scope 'primary_tabs' when the user asks to "
+            "'check all mail', 'any new mail everywhere', or to include Promotions/Updates tabs. "
+            "Use scope 'all_mail' to check unread across all Gmail. "
+            "When reporting, state the scope clearly (e.g. '12 unread in Inbox' vs '28 unread across Inbox, Promotions, and Updates')."
         ),
         "input_schema": {
             "type": "object",
@@ -323,6 +327,17 @@ TOOL_SCHEMAS: list[dict] = [
                 "summary_only": {
                     "type": "boolean",
                     "description": "If true, return just the total count and top senders instead of individual emails.",
+                },
+                "scope": {
+                    "type": "string",
+                    "description": (
+                        "Where to look for unread mail. "
+                        "inbox = Inbox only (default). "
+                        "primary_tabs = Inbox + Promotions + Updates. "
+                        "all_mail = all Gmail. "
+                        "Use broader scope when the user asks to check all mail or everywhere."
+                    ),
+                    "enum": ["inbox", "primary_tabs", "all_mail"],
                 },
             },
             "required": [],
@@ -1789,10 +1804,10 @@ TOOL_SCHEMAS: list[dict] = [
         "name": "suggest_actions",
         "description": (
             "Attach inline action buttons to your reply so Dale can tap instead of typing. "
-            "Call this at the END of your turn when your response suggests clear next steps. "
-            "Use when: calendar summary → [Add to calendar]; research result → [Break down] or [Forward to cowork]; "
-            "email triage → [Add to calendar] if event mentioned. "
-            "Do NOT use for every message — only when 2–4 contextual actions would save Dale a follow-up. "
+            "Use suggest_actions only when offering 2–4 decisions Dale can make (e.g. add event, archive email, forward to cowork, dismiss). "
+            "Call at the END of your turn when your response suggests clear next steps. "
+            "Decisions only: [Add to calendar] for a suggested/mentioned event not yet on the calendar; [Archive] after triage; [Forward to cowork] when the message is a candidate to send; [Dismiss] to acknowledge. "
+            "Do NOT attach a button for every item in a list when the list is informational (e.g. do not add [Add to calendar] per existing calendar event in a briefing — those are already on the calendar). "
             "Supported callback_id: add_to_calendar, forward_to_cowork, break_down, dismiss."
         ),
         "input_schema": {
@@ -1820,7 +1835,7 @@ TOOL_SCHEMAS: list[dict] = [
                             },
                             "payload": {
                                 "type": "object",
-                                "description": "Context for the action. add_to_calendar: title, when (ISO). break_down: topic. forward_to_cowork: text.",
+                                "description": "Context for the action. add_to_calendar: title, when (ISO) — use only for suggested events not yet on the calendar. break_down: topic. forward_to_cowork: text.",
                             },
                         },
                         "required": ["label", "callback_id"],

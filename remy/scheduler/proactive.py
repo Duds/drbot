@@ -42,6 +42,7 @@ from .briefings import (
 
 if TYPE_CHECKING:
     from telegram import Bot
+    from ..google.gmail import GmailClient
     from ..memory.automations import AutomationStore
     from ..memory.plans import PlanStore
     from ..memory.file_index import FileIndexer
@@ -152,6 +153,7 @@ class ProactiveScheduler:
         fact_store: FactStore | None = None,
         calendar_client=None,  # remy.google.calendar.CalendarClient | None
         contacts_client=None,  # remy.google.contacts.ContactsClient | None
+        gmail_client: "GmailClient | None" = None,
         automation_store: "AutomationStore | None" = None,
         claude_client: "ClaudeClient | None" = None,
         conversation_analyzer=None,  # remy.analytics.analyzer.ConversationAnalyzer | None
@@ -167,6 +169,7 @@ class ProactiveScheduler:
         self._fact_store = fact_store
         self._calendar = calendar_client
         self._contacts = contacts_client
+        self._gmail = gmail_client
         self._automation_store = automation_store
         self._claude_client = claude_client
         self._conversation_analyzer = conversation_analyzer
@@ -732,6 +735,7 @@ class ProactiveScheduler:
             fact_store=self._fact_store,
             calendar=self._calendar,
             contacts=self._contacts,
+            gmail=self._gmail,
             file_indexer=self._file_indexer,
             claude=self._claude_client,
         )
