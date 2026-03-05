@@ -1,0 +1,128 @@
+flowchart TB
+    subgraph OC["OPENCLAW — Platform / Infrastructure"]
+        direction TB
+
+        subgraph OC_IN["Inputs"]
+            OC_WA([WhatsApp]) & OC_TG([Telegram]) & OC_SL([Slack]) & OC_WH([Webhook])
+            OC_HB([Heartbeat 30min]) & OC_CR([Cron Jobs])
+        end
+
+        subgraph OC_GW["Gateway — Control Plane (WebSocket RPC)"]
+            OC_CA[Channel Adapter] --> OC_CTX[Context Assembly\nSOUL.md · MEMORY.md · Tools]
+            OC_CTX --> OC_LQ[Lane Queue\nSerial by default]
+        end
+
+        subgraph OC_RT["Agent Runtime — Pi SDK Embedded"]
+            OC_REACT["ReAct Loop\nReason → Tool → Observe → Repeat"]
+            OC_TOOLS["Tool Layer\nExec · File · Browser · Web"]
+            OC_SKILLS["Skills\nSKILL.md on demand"]
+        end
+
+        subgraph OC_SUB["Sub-Agent Layer"]
+            OC_D0[Main Agent\nDepth 0]
+            OC_D1A[Orchestrator\nDepth 1] & OC_D1B[Worker\nDepth 1]
+            OC_D2A[Leaf\nDepth 2] & OC_D2B[Leaf\nDepth 2]
+        end
+
+        subgraph OC_MEM["Memory — File Based"]
+            OC_SOUL[SOUL.md] & OC_UMEM[MEMORY.md] & OC_DAILY[Daily Notes] & OC_HIST[Sessions JSON]
+        end
+
+        subgraph OC_MDL["Model Routing"]
+            OC_CHEAP[Cheap Model\nHeartbeat · Sub-agents]
+            OC_FRONT[Frontier Model\nMain Orchestrator]
+        end
+
+        OC_IN --> OC_GW
+        OC_LQ --> OC_D0
+        OC_D0 --> OC_RT
+        OC_D0 -->|sessions_spawn| OC_D1A & OC_D1B
+        OC_D1A -->|sessions_spawn| OC_D2A & OC_D2B
+        OC_D2A & OC_D2B -->|announce| OC_D1A
+        OC_D1A & OC_D1B -->|announce| OC_D0
+        OC_MEM --> OC_CTX
+        OC_D0 --> OC_FRONT
+        OC_D1A & OC_D1B --> OC_CHEAP
+    end
+
+    subgraph RY["REMY — Personal Agent / Application"]
+        direction TB
+
+        subgraph RY_IN["Inputs"]
+            RY_TG([Telegram\nSingle Channel])
+            RY_CR([Cron\nBriefing · Check-in · Alcohol])
+        end
+
+        subgraph RY_BOT["Bot Layer"]
+            RY_POLL[Polling Handler]
+            RY_SESS[Session Manager\nJSONL transcripts]
+            RY_STRM[Streaming Handler]
+        end
+
+        subgraph RY_AI["AI Layer"]
+            RY_ROUTE[Message Router\nSimple vs Complex]
+            RY_CLAUDE[Claude Client\nStreaming + Tools]
+            RY_TOOLS[Tool Registry\n50+ tools]
+        end
+
+        subgraph RY_MEM["Memory Layer — SQLite"]
+            RY_GOALS[Goals & Plans]
+            RY_FACTS[Facts Store]
+            RY_CONV[Conversations]
+            RY_VEC[sqlite-vec\nEmbeddings]
+        end
+
+        subgraph RY_INT["Integration Layer"]
+            RY_GMAIL[Gmail] & RY_CAL[Calendar] & RY_CONT[Contacts]
+            RY_WEB[Web Search] & RY_FILE[File System] & RY_GDOC[GDocs]
+        end
+
+        subgraph RY_INFRA["Infrastructure"]
+            RY_HLTH[Health Server\n/health · /metrics · /logs]
+            RY_DIAG[Self-Diagnostics]
+            RY_RELAY[Relay MCP\nClaude Code Bridge]
+            RY_CONF[Config + .env]
+        end
+
+        subgraph RY_MDL["Model Routing"]
+            RY_SIMPLE[Haiku\nSimple Tasks]
+            RY_COMPLEX[Sonnet\nComplex Tasks]
+        end
+
+        RY_IN --> RY_POLL
+        RY_POLL --> RY_SESS --> RY_ROUTE
+        RY_ROUTE --> RY_CLAUDE
+        RY_CLAUDE --> RY_TOOLS
+        RY_TOOLS --> RY_INT
+        RY_TOOLS --> RY_MEM
+        RY_CLAUDE --> RY_STRM
+        RY_ROUTE --> RY_SIMPLE & RY_COMPLEX
+        RY_INFRA --> RY_RELAY
+    end
+
+    RY_STRM -->|response| RY_TG
+    OC_D0 -->|stream| OC_TG
+
+    classDef oc_gw fill:#1e3a5f,stroke:#4a90d9,color:#e8f4ff
+    classDef oc_rt fill:#1a3a2a,stroke:#4caf79,color:#e8fff0
+    classDef oc_sub fill:#1a3a3a,stroke:#34d399,color:#ecfdf5
+    classDef oc_mem fill:#3a2a1a,stroke:#d4a843,color:#fff8e8
+    classDef oc_mdl fill:#3a1a1a,stroke:#f87171,color:#fef2f2
+    classDef ry_bot fill:#2a1a3a,stroke:#c084fc,color:#fdf4ff
+    classDef ry_ai fill:#1a2a3a,stroke:#60a5fa,color:#eff6ff
+    classDef ry_mem fill:#1a3a2a,stroke:#86efac,color:#f0fdf4
+    classDef ry_int fill:#3a3a1a,stroke:#fbbf24,color:#fffbeb
+    classDef ry_inf fill:#2a2a2a,stroke:#9ca3af,color:#f9fafb
+    classDef ry_mdl fill:#3a1a1a,stroke:#f87171,color:#fef2f2
+
+    class OC_GW,OC_CA,OC_CTX,OC_LQ oc_gw
+    class OC_RT,OC_REACT,OC_TOOLS,OC_SKILLS oc_rt
+    class OC_SUB,OC_D0,OC_D1A,OC_D1B,OC_D2A,OC_D2B oc_sub
+    class OC_MEM,OC_SOUL,OC_UMEM,OC_DAILY,OC_HIST oc_mem
+    class OC_MDL,OC_CHEAP,OC_FRONT oc_mdl
+    class RY_BOT,RY_POLL,RY_SESS,RY_STRM ry_bot
+    class RY_AI,RY_ROUTE,RY_CLAUDE,RY_TOOLS ry_ai
+    class RY_MEM,RY_GOALS,RY_FACTS,RY_CONV,RY_VEC ry_mem
+    class RY_INT,RY_GMAIL,RY_CAL,RY_CONT,RY_WEB,RY_FILE,RY_GDOC ry_int
+    class RY_INFRA,RY_HLTH,RY_DIAG,RY_RELAY,RY_CONF ry_inf
+    class RY_MDL,RY_SIMPLE,RY_COMPLEX ry_mdl
