@@ -1,0 +1,131 @@
+flowchart TD
+    %% External inputs
+    WA([WhatsApp]) & TG([Telegram]) & SL([Slack]) & DC([Discord]) & WH([Webhook])
+    CRON([Cron Jobs]) & HB([Heartbeat\n30min])
+
+    %% Gateway
+    subgraph GW["Gateway — Control Plane"]
+        CA[Channel Adapter\nNormalise input]
+        CTX[Context Assembly\nSOUL.md · USER.md · MEMORY.md · Tools]
+        LANE[Lane Queue\nSerial by default]
+    end
+
+    %% Agent Runtime
+    subgraph ART["Agent Runtime — Pi SDK"]
+        REACT["ReAct Loop\nReason → Tool call → Observe → Repeat"]
+        TOOLS["Tool Layer\nExec · File · Browser · Web · apply_patch"]
+        SKILLS["Skills\nSKILL.md loaded on demand"]
+        STREAM[Block Streamer\nPartial response chunks]
+    end
+
+    %% Memory
+    subgraph MEM["Memory System"]
+        SOUL[SOUL.md\nPersonality]
+        UMEM[MEMORY.md\nLong-term facts]
+        DAILY[Daily Notes\nYYYY-MM-DD.md]
+        HIST[Session History\nJSON transcripts]
+    end
+
+    %% Proactivity
+    subgraph PRO["Proactivity Engine"]
+        HBMD[HEARTBEAT.md\nTask checklist]
+        HBOK{Anything\nto do?}
+        CRONJ[Cron Job\nIsolated session]
+    end
+
+    %% Main agent
+    subgraph MAIN["Main Agent — Depth 0"]
+        MRUN[Main Run\nagent:id:main]
+    end
+
+    %% Sub-agent layer
+    subgraph SUB["Sub-Agents — Depth 1  (max 5 active)"]
+        ORCH[Orchestrator Sub-agent\nCan spawn children]
+        WORK1[Worker Sub-agent]
+        WORK2[Worker Sub-agent]
+    end
+
+    %% Leaf workers
+    subgraph LEAF["Leaf Workers — Depth 2  (never spawn)"]
+        LW1[Leaf Worker]
+        LW2[Leaf Worker]
+        LW3[Leaf Worker]
+    end
+
+    %% Announce chain
+    ANN2([Announce up\nto depth-1])
+    ANN1([Announce up\nto main])
+
+    %% Model routing
+    subgraph MODELS["Model Routing — OpenRouter"]
+        CHEAP[Cheap model\ne.g. Gemini Flash\nHeartbeat · sub-agents]
+        FRONT[Frontier model\ne.g. Claude Sonnet\nMain orchestrator]
+    end
+
+    %% Connections — inputs to gateway
+    WA & TG & SL & DC & WH --> CA
+    CRON --> CRONJ
+    HB --> HBMD
+
+    %% Heartbeat logic
+    HBMD --> HBOK
+    HBOK -- Yes --> CA
+    HBOK -- No --> HBOK_OK([HEARTBEAT_OK\nSuppressed — silent])
+
+    %% Cron isolated session
+    CRONJ --> MRUN
+
+    %% Gateway flow
+    CA --> CTX --> LANE --> MRUN
+
+    %% Memory feeds context
+    SOUL & UMEM & DAILY & HIST --> CTX
+
+    %% Main agent uses runtime
+    MRUN --> REACT
+    REACT --> TOOLS
+    REACT --> SKILLS
+    REACT --> STREAM
+
+    %% Main spawns sub-agents
+    MRUN -- sessions_spawn --> ORCH
+    MRUN -- sessions_spawn --> WORK1
+    MRUN -- sessions_spawn --> WORK2
+
+    %% Orchestrator spawns leaves
+    ORCH -- sessions_spawn --> LW1
+    ORCH -- sessions_spawn --> LW2
+    ORCH -- sessions_spawn --> LW3
+
+    %% Announce chain back up
+    LW1 & LW2 & LW3 --> ANN2 --> ORCH
+    ORCH & WORK1 & WORK2 --> ANN1 --> MRUN
+
+    %% Model routing
+    MRUN --> FRONT
+    ORCH & WORK1 & WORK2 & CRONJ --> CHEAP
+
+    %% Output
+    STREAM --> OUT([User\nChannel])
+    ANN1 --> OUT
+
+    %% Styles
+    classDef gateway fill:#1e3a5f,stroke:#4a90d9,color:#e8f4ff
+    classDef runtime fill:#1a3a2a,stroke:#4caf79,color:#e8fff0
+    classDef memory fill:#3a2a1a,stroke:#d4a843,color:#fff8e8
+    classDef proactive fill:#3a1a3a,stroke:#c084fc,color:#fdf4ff
+    classDef main fill:#1a2a3a,stroke:#60a5fa,color:#eff6ff
+    classDef sub fill:#1a3a3a,stroke:#34d399,color:#ecfdf5
+    classDef leaf fill:#2a3a1a,stroke:#86efac,color:#f0fdf4
+    classDef model fill:#3a1a1a,stroke:#f87171,color:#fef2f2
+    classDef io fill:#374151,stroke:#9ca3af,color:#f9fafb
+
+    class CA,CTX,LANE gateway
+    class REACT,TOOLS,SKILLS,STREAM runtime
+    class SOUL,UMEM,DAILY,HIST memory
+    class HBMD,HBOK,CRONJ proactive
+    class MRUN main
+    class ORCH,WORK1,WORK2 sub
+    class LW1,LW2,LW3 leaf
+    class CHEAP,FRONT model
+    class WA,TG,SL,DC,WH,CRON,HB,OUT,HBOK_OK,ANN1,ANN2 io
