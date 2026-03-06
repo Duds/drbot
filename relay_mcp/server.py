@@ -132,6 +132,7 @@ def row_to_dict(row: sqlite3.Row) -> dict:
 # ── FastMCP server ─────────────────────────────────────────────────────────────
 
 mcp = FastMCP("relay_mcp", lifespan=lifespan)
+server = sys.modules[__name__]  # module-level alias expected by tests
 
 
 # ══════════════════════════════════════════════════════════════════════════════
