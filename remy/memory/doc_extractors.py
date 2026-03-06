@@ -85,7 +85,7 @@ def extract_text_from_pdf_ocr(path: Path, *, lang: str = "eng") -> str | None:
         doc = pymupdf.open(path)
         parts: list[str] = []
         try:
-            for page in doc:
+            for page in doc:  # type: ignore[attr-defined]
                 pix = page.get_pixmap(dpi=150)
                 if pix.width == 0 or pix.height == 0:
                     continue
@@ -125,7 +125,7 @@ def extract_text_from_docx(path: Path) -> str | None:
         return None
 
     try:
-        doc = Document(path)
+        doc = Document(str(path))
         parts = [p.text.strip() for p in doc.paragraphs if p.text and p.text.strip()]
         return "\n\n".join(parts) if parts else None
     except Exception as e:

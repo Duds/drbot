@@ -15,6 +15,13 @@ def make_registry() -> MagicMock:
     return MagicMock()
 
 
+@pytest.fixture(autouse=True)
+def use_cwd_as_repo(monkeypatch):
+    """Reset workspace_root so git tools fall back to cwd (the project root, a git repo)."""
+    stub = type("Stub", (), {"workspace_root": ""})()
+    monkeypatch.setattr(git, "settings", stub)
+
+
 class TestExecGitLog:
     """Tests for exec_git_log."""
 
