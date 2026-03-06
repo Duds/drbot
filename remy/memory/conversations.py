@@ -13,7 +13,7 @@ import os
 from datetime import datetime, timezone
 from typing import Optional
 
-import aiofiles
+import aiofiles  # type: ignore[import-untyped]
 
 from ..bot.session import validate_session_key
 from ..models import ConversationTurn

@@ -18,12 +18,16 @@ from .heartbeat_config import load_heartbeat_config
 logger = logging.getLogger(__name__)
 
 
-async def _get_already_surfaced_today(db, tz: ZoneInfo) -> str:
+async def _get_already_surfaced_today(db, tz: ZoneInfo | timezone) -> str:
     """Return a short summary of what the heartbeat already delivered today (user's timezone)."""
     now = datetime.now(tz)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     today_start_utc = today_start.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
-    today_end_utc = (today_start.replace(hour=23, minute=59, second=59) + timedelta(seconds=1)).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+    today_end_utc = (
+        (today_start.replace(hour=23, minute=59, second=59) + timedelta(seconds=1))
+        .astimezone(timezone.utc)
+        .strftime("%Y-%m-%dT%H:%M:%S")
+    )
 
     async with db.get_connection() as conn:
         cursor = await conn.execute(
@@ -64,6 +68,7 @@ async def _get_already_surfaced_today(db, tz: ZoneInfo) -> str:
 
 def _in_quiet_hours() -> bool:
     """True if current time is in heartbeat quiet hours (no evaluation)."""
+    tz: ZoneInfo | timezone
     try:
         tz = ZoneInfo(settings.scheduler_timezone)
     except Exception:
@@ -88,17 +93,24 @@ async def run_heartbeat_job(
         logger.debug("Heartbeat skipped — quiet hours")
         return
 
-    chat_id = get_primary_chat_id() if callable(get_primary_chat_id) else get_primary_chat_id
-    user_id = get_primary_user_id() if callable(get_primary_user_id) else get_primary_user_id
+    chat_id = (
+        get_primary_chat_id() if callable(get_primary_chat_id) else get_primary_chat_id
+    )
+    user_id = (
+        get_primary_user_id() if callable(get_primary_user_id) else get_primary_user_id
+    )
     if chat_id is None or user_id is None:
         logger.debug("Heartbeat skipped — no primary chat or user")
         return
 
-    await hook_manager.emit(HookEvents.HEARTBEAT_START, {"chat_id": chat_id, "user_id": user_id})
+    await hook_manager.emit(
+        HookEvents.HEARTBEAT_START, {"chat_id": chat_id, "user_id": user_id}
+    )
 
     config_text = load_heartbeat_config()
 
     # Current time in user's timezone so the model can apply Daily Orientation / Wellbeing windows
+    tz: ZoneInfo | timezone
     try:
         tz = ZoneInfo(settings.scheduler_timezone)
     except Exception:
@@ -119,8 +131,12 @@ async def run_heartbeat_job(
 
     fired_at = datetime.now(timezone.utc).isoformat()
     try:
-        items_checked_json = json.dumps(result.items_checked) if result.items_checked else None
-        items_surfaced_json = json.dumps(result.items_surfaced) if result.items_surfaced else None
+        items_checked_json = (
+            json.dumps(result.items_checked) if result.items_checked else None
+        )
+        items_surfaced_json = (
+            json.dumps(result.items_surfaced) if result.items_surfaced else None
+        )
     except (TypeError, ValueError):
         items_checked_json = None
         items_surfaced_json = None
@@ -156,4 +172,6 @@ async def run_heartbeat_job(
     if result.outcome == "HEARTBEAT_OK":
         logger.debug("Heartbeat: HEARTBEAT_OK (nothing to surface)")
     else:
-        logger.info("Heartbeat: delivered to chat %d (%d ms)", chat_id, result.duration_ms)
+        logger.info(
+            "Heartbeat: delivered to chat %d (%d ms)", chat_id, result.duration_ms
+        )

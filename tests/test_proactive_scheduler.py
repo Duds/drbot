@@ -301,15 +301,18 @@ async def test_scheduler_start_and_stop(db, goal_store):
 
 @pytest.mark.asyncio
 async def test_scheduler_start_with_bad_cron_does_not_crash(db, goal_store):
-    """Invalid cron should log an error and not start the scheduler."""
+    """Invalid cron should log an error and not start the scheduler (legacy mode only)."""
     bot = make_bot()
     sched = make_scheduler(bot, goal_store)
     with patch("remy.scheduler.proactive.settings") as mock_settings:
+        mock_settings.heartbeat_enabled = False
         mock_settings.briefing_cron = "bad cron string"
         mock_settings.checkin_cron = "0 19 * * *"
         mock_settings.scheduler_timezone = "Australia/Sydney"
+        mock_settings.afternoon_check_cron = "0 17 * * *"
+        mock_settings.afternoon_cron = "0 14 * * *"
         sched.start()
-    # Scheduler should NOT be running
+    # Scheduler should NOT be running (invalid cron caused early return)
     assert not sched._scheduler.running
 
 

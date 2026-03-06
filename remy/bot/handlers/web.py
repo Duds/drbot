@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from telegram import Update, InlineKeyboardMarkup
 from telegram.constants import ChatAction
@@ -98,7 +98,7 @@ async def run_research_flow(
         msg = f"📚 *Research: {topic}*\n\n{synthesis}"
         if len(msg) > 4000:
             msg = msg[:4000] + "…"
-        send_kwargs = {"parse_mode": "MarkdownV2"}
+        send_kwargs: dict[str, Any] = {"parse_mode": "MarkdownV2"}
         if thread_id is not None:
             send_kwargs["message_thread_id"] = thread_id
         if reply_markup is not None:
