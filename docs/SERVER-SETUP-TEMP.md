@@ -55,7 +55,7 @@ BRIEFING_EMAIL_SCOPE=all_mail
 
 ## 2. SOUL — add real intent for the afternoon check
 
-In `config/SOUL.md` (or `config/SOUL.compact.md` if you use it), add a short section so Remy knows what the **afternoon check-in** is for. The code only says "Afternoon check-in"; the intent comes from SOUL or HEARTBEAT.local.
+In `config/SOUL.md` (or `config/SOUL.compact.md` if you use it), add a short section so Remy knows what the **afternoon check-in** is for. The code only says "Afternoon check-in"; the intent comes from SOUL or your HEARTBEAT.md.
 
 **Suggested block to add under "Context" or "What the Agent Does" (or a new "Proactive check-ins" section):**
 
@@ -73,58 +73,19 @@ Adjust wording to your voice. The important part: the model needs to know the af
 
 ---
 
-## 3. HEARTBEAT — public vs local
+## 3. HEARTBEAT — template vs private
 
-- **HEARTBEAT.md** — already in the repo. No changes needed on the server unless you want to tweak the checklist.
-- **HEARTBEAT.local.md** — create this on the server only (gitignored). Copy from `config/HEARTBEAT.example.md` and fill in **real intent** below.
+- **HEARTBEAT.example.md** — in the repo; the public template. Forks get this only.
+- **HEARTBEAT.md** — gitignored. Copy `config/HEARTBEAT.example.md` to `config/HEARTBEAT.md` on the server and put your full private config there (thresholds, wellbeing intent, etc.). This file is never committed.
 
-### HEARTBEAT.local.md — what to put in (real intent)
-
-Create `config/HEARTBEAT.local.md` on the server with content like this. **Do not commit this file.**
-
-```markdown
-# HEARTBEAT.local.md — personal thresholds (do not commit)
-
-Copy from HEARTBEAT.example.md and customise. Below: real intent for wellbeing.
-
----
-
-## Goals (local overrides)
-
-- Stale goal threshold: N days without progress (e.g. 5).
-- Goal tags or names that always warrant a nudge.
-
----
-
-## Calendar (local overrides)
-
-- Event keywords that mean "always surface" (e.g. "interview", "doctor").
-- Lead time for "meeting starting soon" (e.g. 15 minutes).
-
----
-
-## Email (local overrides)
-
-- Unread count threshold above which to surface (e.g. 20).
-- Sender patterns or labels that are high-priority.
-
----
-
-## Wellbeing Check-in (local only — real intent)
-
-- **This is the sobriety / alcohol check-in.** Time window: 13:00–19:00 (primary window 17:00–18:30). Minimum hours between check-ins: 36.
-- Dale's high-risk window is often 5:00–6:30pm. The model should be compassionate, context-aware, never preachy. Use memory and today's conversation; warmth and presence over advice.
-- Any other personal signals or triggers go here. This file must not be committed.
-```
-
-Replace placeholders (N days, 15 minutes, 20, 36 hours, etc.) with your actual thresholds.
+When HEARTBEAT.md is missing, the heartbeat runs using HEARTBEAT.example.md. Copy to HEARTBEAT.md and add your real intent (wellbeing window, min hours between check-ins, etc.). Do not commit HEARTBEAT.md.
 
 ---
 
 ## 4. Quick checklist on the server
 
 1. Copy `.env.example` → `.env`; fill `TELEGRAM_BOT_TOKEN`, `ANTHROPIC_API_KEY`, `TELEGRAM_ALLOWED_USERS_RAW`.
-2. Set `HEARTBEAT_ENABLED=true`, `SCHEDULER_TIMEZONE=Australia/Sydney`. If using legacy crons, set `AFTERNOON_CHECK_CRON=0 17 * * *` (real intent: 5pm sobriety check).
-3. In SOUL: add the "Proactive check-ins" block so the afternoon check is clearly the sobriety check-in.
-4. Create `config/HEARTBEAT.local.md` from the template above; fill in wellbeing window (13:00–19:00, min 36h between) and any other personal thresholds.
+2. Set `HEARTBEAT_ENABLED=true`, `SCHEDULER_TIMEZONE=Australia/Sydney`. If using legacy crons, set `AFTERNOON_CHECK_CRON=0 17 * * *`.
+3. In SOUL: add the "Proactive check-ins" block so the afternoon check intent is clear.
+4. Copy `config/HEARTBEAT.example.md` → `config/HEARTBEAT.md`; fill in your thresholds and wellbeing check-in intent (HEARTBEAT.md is gitignored).
 5. Delete this file (`docs/SERVER-SETUP-TEMP.md`) after copying. Do not commit it.

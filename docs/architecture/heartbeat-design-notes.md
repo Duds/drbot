@@ -4,14 +4,13 @@ Short answers to common questions about the evaluative heartbeat.
 
 ---
 
-## 1. Do you need HEARTBEAT.local.md?
+## 1. HEARTBEAT.md vs HEARTBEAT.example.md
 
-**No.** HEARTBEAT.local.md is **optional**.
+**HEARTBEAT.md is gitignored** — your private config. The repo ships **HEARTBEAT.example.md** as the only committed template.
 
-- The heartbeat runs using **HEARTBEAT.md only** if you never create a local file.
-- Create `config/HEARTBEAT.local.md` only when you want **personal overrides** (wellbeing thresholds, private triggers, calendar tags, etc.). It is gitignored.
-- Copy from `config/HEARTBEAT.example.md` if you do add one.
-- The loader merges HEARTBEAT.md + HEARTBEAT.local.md at runtime; if the local file is missing, it uses public defaults only.
+- If **HEARTBEAT.md** exists, the loader uses it.
+- If HEARTBEAT.md is missing (e.g. fresh clone), the loader uses **HEARTBEAT.example.md** so the app runs out of the box.
+- Copy `config/HEARTBEAT.example.md` → `config/HEARTBEAT.md` and customise; your HEARTBEAT.md is never committed, so forks never see your private settings.
 
 ---
 

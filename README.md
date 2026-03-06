@@ -65,7 +65,7 @@ All configuration is via `.env`. Copy `.env.example` to get started.
 | `RAG_PDF_OCR_ENABLED` | — | Set to `false` to disable OCR for image-only PDFs (default: `true`) |
 | `RAG_OCR_LANG` | — | Tesseract language(s), e.g. `eng` or `eng+fra` (default: `eng`) |
 
-**Heartbeat & SOUL:** When using the evaluative heartbeat (`HEARTBEAT_ENABLED=true`), create `config/HEARTBEAT.local.md` from `config/HEARTBEAT.example.md` for personal thresholds and wellbeing check-in intent (gitignored). In SOUL, add a **Proactive check-ins** section so the model knows what the morning, afternoon, and evening check-ins are for. See [docs/SERVER-SETUP.md](docs/SERVER-SETUP.md) for the full server checklist.
+**Heartbeat & SOUL:** The repo ships `config/HEARTBEAT.example.md` as the template. Copy it to `config/HEARTBEAT.md` (gitignored) for your private config — that file is never committed, so forks get only the template. When using the evaluative heartbeat (`HEARTBEAT_ENABLED=true`), put your thresholds and wellbeing check-in intent in HEARTBEAT.md. In SOUL, add a **Proactive check-ins** section so the model knows what the morning, afternoon, and evening check-ins are for. See [docs/SERVER-SETUP.md](docs/SERVER-SETUP.md) for the full server checklist.
 
 **File index (PDF/DOCX):** Remy can index PDF and Word (.docx) files for search. For image-only or scanned PDFs, it uses **Tesseract OCR**. Install Tesseract on the host (e.g. `brew install tesseract` on macOS) so OCR can run; if Tesseract is not installed, text-only PDFs are still indexed.
 

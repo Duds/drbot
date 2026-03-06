@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 
-
 from remy.scheduler.heartbeat_config import HEARTBEAT_OK_RESPONSE, load_heartbeat_config
 
 
@@ -11,8 +10,8 @@ def test_heartbeat_ok_constant():
     assert HEARTBEAT_OK_RESPONSE == "HEARTBEAT_OK"
 
 
-def test_load_heartbeat_config_when_public_missing(monkeypatch):
-    """When HEARTBEAT.md does not exist, returns minimal context string."""
+def test_load_heartbeat_config_when_both_missing(monkeypatch):
+    """When HEARTBEAT.md and HEARTBEAT.example.md do not exist, returns minimal context."""
     monkeypatch.setattr(
         "remy.scheduler.heartbeat_config.settings",
         type("S", (), {"heartbeat_md_path": "/nonexistent/HEARTBEAT.md"})(),
@@ -22,8 +21,8 @@ def test_load_heartbeat_config_when_public_missing(monkeypatch):
     assert len(result) > 0
 
 
-def test_load_heartbeat_config_public_only(tmp_path, monkeypatch):
-    """When only public file exists, returns its content."""
+def test_load_heartbeat_config_hearts_md_only(tmp_path, monkeypatch):
+    """When HEARTBEAT.md exists, returns its content."""
     public = tmp_path / "HEARTBEAT.md"
     public.write_text("# Public\n\nGoals: check overdue.")
     monkeypatch.setattr(
@@ -33,22 +32,18 @@ def test_load_heartbeat_config_public_only(tmp_path, monkeypatch):
     result = load_heartbeat_config()
     assert "Public" in result
     assert "Goals: check overdue." in result
-    assert "Local overrides" not in result
 
 
-def test_load_heartbeat_config_merges_local(tmp_path, monkeypatch):
-    """When public and .local exist, returns merged content."""
-    public = tmp_path / "HEARTBEAT.md"
-    local = tmp_path / "HEARTBEAT.local.md"
-    public.write_text("# Public\n\nGoals.")
-    local.write_text("# Local\n\nStale days: 5.")
+def test_load_heartbeat_config_fallback_to_example(tmp_path, monkeypatch):
+    """When HEARTBEAT.md is missing but HEARTBEAT.example.md exists, use the example."""
+    example = tmp_path / "HEARTBEAT.example.md"
+    example.write_text("# Template\n\nGoals: check overdue.")
+    base_path = tmp_path / "HEARTBEAT.md"
+    assert not base_path.exists()
     monkeypatch.setattr(
         "remy.scheduler.heartbeat_config.settings",
-        type("S", (), {"heartbeat_md_path": str(public)})(),
+        type("S", (), {"heartbeat_md_path": str(base_path)})(),
     )
     result = load_heartbeat_config()
-    assert "Public" in result
-    assert "Goals." in result
-    assert "Local overrides" in result
-    assert "Local" in result
-    assert "Stale days: 5." in result
+    assert "Template" in result
+    assert "Goals: check overdue." in result

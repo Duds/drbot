@@ -181,34 +181,26 @@ The evaluative heartbeat makes Remy feel proactive rather than reactive, without
 
 HEARTBEAT.md is committed to the public repo. It must not contain personal context — relationship details, wellbeing signals, intimate behavioural triggers, or any information the user does not want visible to contributors or the public.
 
-This follows the same pattern already established for SOUL.md: a public file defines structure and defaults; a gitignored local file holds personal overrides.
+This follows the same pattern as SOUL: a committed template for forks; a gitignored file for your private config.
 
 | File | Committed? | Contains |
 |---|---|---|
-| `config/HEARTBEAT.md` | Yes — public repo | Generic threshold categories, structure, extension points, model selection. No personal detail. |
-| `config/HEARTBEAT.local.md` | No — gitignored | Personal thresholds, relationship context, wellbeing signals, calendar event tags, intimate behavioural triggers. |
-| `config/HEARTBEAT.example.md` | Yes — public repo | Documented placeholder showing how to write a local override. Mirrors SOUL.example.md convention. |
+| `config/HEARTBEAT.md` | No — gitignored | Your private config: full checklist, thresholds, wellbeing intent. Never committed. |
+| `config/HEARTBEAT.example.md` | Yes — public repo | Full template. Forks get this only. When HEARTBEAT.md is missing, the loader uses this. |
 
-The heartbeat loader merges both files at runtime. If `HEARTBEAT.local.md` does not exist, the heartbeat runs on public defaults only — the system degrades gracefully for other users cloning the repo.
+Copy `HEARTBEAT.example.md` to `HEARTBEAT.md` and customise; the loader uses HEARTBEAT.md if present, else HEARTBEAT.example.md — so the app works out of the box on clone, and your private settings stay local.
 
-```gitignore
-config/*.local.md   # personal config — never commit
-```
+#### 5.2.2 HEARTBEAT structure
 
-> **NOTE:** The `*.local.md` wildcard future-proofs the pattern. Any new personal config file created in `config/` is automatically excluded from version control without needing to update `.gitignore` again.
-
-#### 5.2.2 Public HEARTBEAT.md — Structure
-
-See `/config/HEARTBEAT.md` in the repo. Key sections: Goals, Calendar, Email, Reminders, Daily Orientation, End-of-Day Reflection, Wellbeing Check-in (stub — personal thresholds in local file), Model Selection, Silence Rules.
+Key sections (in HEARTBEAT.md or the example): Goals, Calendar, Email, Reminders, Daily Orientation, End-of-Day Reflection, Wellbeing Check-in (define intent and thresholds in your HEARTBEAT.md), Model Selection, Silence Rules.
 
 ### 5.3 Heartbeat Architecture
 
 | Component | Location | Description |
 |---|---|---|
-| `HEARTBEAT.md` | `config/HEARTBEAT.md` | Public evaluation template — generic categories and extension points. Committed to repo. |
-| `HEARTBEAT.local.md` | `config/HEARTBEAT.local.md` | Personal overrides — private thresholds, relationship context, wellbeing signals. Gitignored. |
-| `HEARTBEAT.example.md` | `config/HEARTBEAT.example.md` | Documented placeholder showing local override structure. Committed. Mirrors SOUL.example.md. |
-| Config loader | `remy/scheduler/heartbeat.py` | Merges HEARTBEAT.md + HEARTBEAT.local.md at runtime. Gracefully skips local file if absent. |
+| `HEARTBEAT.md` | `config/HEARTBEAT.md` | Your private config — full checklist, thresholds, wellbeing intent. Gitignored. |
+| `HEARTBEAT.example.md` | `config/HEARTBEAT.example.md` | Public template. Committed. Loader uses this when HEARTBEAT.md is missing. |
+| Config loader | `remy/scheduler/heartbeat_config.py` | Loads HEARTBEAT.md if present, else HEARTBEAT.example.md. |
 | HeartbeatJob | `remy/scheduler/heartbeat.py` | Scheduler job — runs merged config evaluation, suppresses HEARTBEAT_OK |
 | HeartbeatHandler | `remy/bot/heartbeat_handler.py` | Executes tool queries and passes results to model for evaluation |
 | Silence guard | `remy/scheduler/heartbeat.py` | Enforces quiet hours — no heartbeat between 22:00 and 07:00 |
@@ -219,7 +211,7 @@ See `/config/HEARTBEAT.md` in the repo. Key sections: Goals, Calendar, Email, Re
 
 | Step | Action | Tool Used |
 |---|---|---|
-| 1 | Load and merge HEARTBEAT.md + HEARTBEAT.local.md into system context | File read (local file optional — skipped if absent) |
+| 1 | Load HEARTBEAT.md or HEARTBEAT.example.md into system context | File read (HEARTBEAT.md if present, else example) |
 | 2 | Query overdue / stale goals | `get_goals` |
 | 3 | Query calendar events in next 90 minutes | `calendar_events` |
 | 4 | Query high-priority unread email | `read_emails` |
@@ -616,12 +608,12 @@ Cursor's role in this model is correctly scoped: **review interface, not executi
 
 ### 10.4 Architectural Decision
 
-> **ARCHITECTURE DECISION:** Add `remy/tools/claude_code.py` — a subprocess tool that invokes the Claude Code CLI with task context and repo path, captures stdout/stderr, and returns the result to Remy. Add a Coding Tasks category to `HEARTBEAT.local.md` with thresholds for stalled tasks, open TODOs, and uncommitted work. Retain `relay_mcp/` as a human-initiated context bus. Do not attempt to make Cursor or Claude Desktop check the relay autonomously — this is architecturally impossible without modifying those tools.
+> **ARCHITECTURE DECISION:** Add `remy/tools/claude_code.py` — a subprocess tool that invokes the Claude Code CLI with task context and repo path, captures stdout/stderr, and returns the result to Remy. Add a Coding Tasks category to `HEARTBEAT.md` with thresholds for stalled tasks, open TODOs, and uncommitted work. Retain `relay_mcp/` as a human-initiated context bus. Do not attempt to make Cursor or Claude Desktop check the relay autonomously — this is architecturally impossible without modifying those tools.
 
 | Component | Location | Priority | Description |
 |---|---|---|---|
 | `claude_code_tool` | `remy/tools/claude_code.py` | P2 | Subprocess wrapper for Claude Code CLI. Accepts task, context, repo_path. Returns result dict with stdout, stderr, exit_code. |
-| Coding Tasks threshold | `config/HEARTBEAT.local.md` | P2 | Personal threshold category: stalled tasks, open TODOs, uncommitted work >N hours. Gitignored. |
+| Coding Tasks threshold | `config/HEARTBEAT.md` | P2 | Personal threshold category: stalled tasks, open TODOs, uncommitted work >N hours. Gitignored. |
 | `relay_mcp/` | Existing | Retain as-is | Human-initiated context bus. No changes needed. Autonomous orchestration documentation removed. |
 
 ### 10.5 Honest Audit Trail

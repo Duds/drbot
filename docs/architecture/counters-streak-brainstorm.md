@@ -90,7 +90,7 @@ e.g. Goal "Sobriety streak" with a "step" or custom field that holds the number.
 2. Add `CounterStore` (or methods on an existing store) with `get`, `set`, `increment`, `reset` by (user_id, name).
 3. Add tools: `get_counter`, `set_counter` (and optionally `increment_counter` / `reset_counter`) so the user can report or ask for the streak.
 4. In memory injector (or a dedicated path for proactive/heartbeat), include a short line for known counters (e.g. "Sobriety streak: 14 days") when building context so the model and heartbeat evaluator see it without calling the tool.
-5. Optionally: allow HEARTBEAT.local.md or config to list counter names to inject (e.g. `sobriety_streak`) so only relevant counters are shown.
+5. Optionally: allow HEARTBEAT.md or config to list counter names to inject (e.g. `sobriety_streak`) so only relevant counters are shown.
 
 ---
 

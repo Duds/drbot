@@ -146,7 +146,7 @@ def _afternoon_checkin_system_prompt(context: dict) -> str:
 def _afternoon_check_system_prompt(context: dict) -> str:
     """
     US-remy-mediated-reminders: afternoon check-in (default 5pm).
-    Compose a compassionate, context-relevant message; intent is in SOUL / HEARTBEAT.local.
+    Compose a compassionate, context-relevant message; intent is in SOUL / HEARTBEAT.md.
     """
     ctx_json = json.dumps(context, indent=0)
     return (

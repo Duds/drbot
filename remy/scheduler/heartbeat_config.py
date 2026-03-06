@@ -1,7 +1,7 @@
-"""Load and merge HEARTBEAT.md + HEARTBEAT.local.md for evaluative heartbeat.
+"""Load heartbeat config: HEARTBEAT.md (private) or HEARTBEAT.example.md (template).
 
-SAD v7: public template (committed) + optional local overrides (gitignored).
-If HEARTBEAT.local.md is missing, the heartbeat runs on public defaults only.
+HEARTBEAT.md is gitignored — your private config. The repo ships HEARTBEAT.example.md
+as the template. If HEARTBEAT.md exists, use it; else use HEARTBEAT.example.md.
 """
 
 from __future__ import annotations
@@ -17,29 +17,32 @@ HEARTBEAT_OK_RESPONSE = "HEARTBEAT_OK"
 
 
 def load_heartbeat_config() -> str:
-    """Load and merge HEARTBEAT.md with HEARTBEAT.local.md.
+    """Load heartbeat config: HEARTBEAT.md if present, else HEARTBEAT.example.md.
 
     Returns:
-        Merged markdown string for use as system/instruction context.
+        Markdown string for use as system/instruction context.
     """
-    public_path = Path(settings.heartbeat_md_path)
-    local_path = public_path.parent / (public_path.stem + ".local" + public_path.suffix)
+    base_path = Path(settings.heartbeat_md_path)
+    parent = base_path.parent
+    stem, suffix = base_path.stem, base_path.suffix
+    example_path = parent / (stem + ".example" + suffix)
 
-    if not public_path.exists():
-        logger.warning("HEARTBEAT.md not found at %s — heartbeat will use minimal context", public_path)
+    if base_path.exists():
+        config_path = base_path
+        logger.debug("Using private HEARTBEAT.md")
+    elif example_path.exists():
+        config_path = example_path
+        logger.debug("No HEARTBEAT.md — using HEARTBEAT.example.md template")
+    else:
+        logger.warning(
+            "No HEARTBEAT.md or HEARTBEAT.example.md at %s / %s — heartbeat will use minimal context",
+            base_path,
+            example_path,
+        )
         return "Respond with HEARTBEAT_OK if nothing warrants contacting the user.\n"
 
-    public_text = public_path.read_text(encoding="utf-8")
-
-    if local_path.exists():
-        try:
-            local_text = local_path.read_text(encoding="utf-8")
-            merged = public_text.rstrip() + "\n\n---\n\n## Local overrides\n\n" + local_text
-            logger.debug("Merged HEARTBEAT.md with HEARTBEAT.local.md")
-            return merged
-        except OSError as e:
-            logger.warning("Could not read HEARTBEAT.local.md: %s — using public only", e)
-    else:
-        logger.debug("No HEARTBEAT.local.md — using public HEARTBEAT.md only")
-
-    return public_text
+    try:
+        return config_path.read_text(encoding="utf-8")
+    except OSError as e:
+        logger.warning("Could not read %s: %s", config_path, e)
+        return "Respond with HEARTBEAT_OK if nothing warrants contacting the user.\n"

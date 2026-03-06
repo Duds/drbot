@@ -1,6 +1,6 @@
 # Server setup — env, SOUL & HEARTBEAT
 
-Checklist for configuring a Remy server: environment, SOUL intent, and optional HEARTBEAT local overrides.
+Checklist for configuring a Remy server: environment, SOUL intent, and HEARTBEAT (private config).
 
 ---
 
@@ -51,17 +51,19 @@ You can copy the block from `config/SOUL.example.md` and adjust wording to your 
 
 ---
 
-## 3. HEARTBEAT — public vs local
+## 3. HEARTBEAT — template vs private
 
-- **HEARTBEAT.md** — already in the repo. No changes needed unless you want to tweak the checklist.
-- **HEARTBEAT.local.md** — create on the server only (gitignored). Copy from `config/HEARTBEAT.example.md` and fill in your personal thresholds and intent.
+- **HEARTBEAT.example.md** — in the repo; the public template. Forks get this only.
+- **HEARTBEAT.md** — gitignored. Copy `config/HEARTBEAT.example.md` to `config/HEARTBEAT.md` on the server and put your full private config there (thresholds, wellbeing intent, etc.). This file is never committed.
 
-### HEARTBEAT.local.md — what to put in
+When HEARTBEAT.md is missing (e.g. fresh clone), the heartbeat runs using HEARTBEAT.example.md so the app works out of the box. Copy to HEARTBEAT.md when you want your private checklist.
+
+### What to put in HEARTBEAT.md
 
 - **Goals:** Stale goal threshold (e.g. N days without progress), goal tags that warrant a nudge.
 - **Calendar:** Event keywords that mean "always surface", lead time for "meeting starting soon" (e.g. 15 minutes).
 - **Email:** Unread count threshold, sender patterns or labels that are high-priority.
-- **Wellbeing Check-in:** Time window (e.g. 13:00–19:00, primary 17:00–18:30), minimum hours between check-ins (e.g. 36). Describe the intent of this check-in so the model can tailor tone. Any other personal signals go here. Do not commit this file.
+- **Wellbeing Check-in:** Time window, minimum hours between check-ins. Describe the intent so the model can tailor tone. Do not commit HEARTBEAT.md.
 
 ---
 
@@ -70,5 +72,5 @@ You can copy the block from `config/SOUL.example.md` and adjust wording to your 
 1. Copy `.env.example` → `.env`; set `TELEGRAM_BOT_TOKEN`, `ANTHROPIC_API_KEY`, `TELEGRAM_ALLOWED_USERS_RAW`.
 2. Set `HEARTBEAT_ENABLED=true`, `SCHEDULER_TIMEZONE` to your timezone. If using legacy crons, set `AFTERNOON_CHECK_CRON` (e.g. `0 17 * * *`).
 3. In SOUL: add the **Proactive check-ins** block so the afternoon check intent is clear.
-4. Create `config/HEARTBEAT.local.md` from `config/HEARTBEAT.example.md`; fill in wellbeing window, min hours between check-ins, and any other personal thresholds.
+4. Copy `config/HEARTBEAT.example.md` → `config/HEARTBEAT.md`; fill in your thresholds and wellbeing check-in intent (HEARTBEAT.md is gitignored).
 5. Restart the bot and verify health: `curl http://localhost:8080/health`.

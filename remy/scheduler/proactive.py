@@ -192,47 +192,51 @@ class ProactiveScheduler:
         """Register built-in jobs and start the scheduler."""
         heartbeat_enabled = getattr(settings, "heartbeat_enabled", True)
 
-        if heartbeat_enabled:
+        heartbeat_ready = (
+            heartbeat_enabled
+            and self._heartbeat_handler is not None
+            and self._db is not None
+        )
+        if heartbeat_ready:
             # Heartbeat mode: only evaluative heartbeat; never register legacy crons.
-            if self._heartbeat_handler is None or self._db is None:
+            try:
+                heartbeat_cron = getattr(settings, "heartbeat_cron", "*/30 * * * *")
+                heartbeat_trigger = _parse_cron(heartbeat_cron)
+                from .heartbeat import run_heartbeat_job
+
+                def _primary_user_id() -> int | None:
+                    users = getattr(settings, "telegram_allowed_users", None) or []
+                    return int(users[0]) if users else None
+
+                async def _heartbeat_job() -> None:
+                    await run_heartbeat_job(
+                        self._heartbeat_handler,
+                        self._db,
+                        _read_primary_chat_id,
+                        _primary_user_id,
+                    )
+
+                self._scheduler.add_job(
+                    _heartbeat_job,
+                    trigger=heartbeat_trigger,
+                    id="evaluative_heartbeat",
+                    replace_existing=True,
+                    misfire_grace_time=600,
+                    coalesce=True,
+                )
+                logger.info(
+                    "Proactive scheduler: evaluative heartbeat only (cron: %s); legacy briefing/check-in crons disabled",
+                    heartbeat_cron,
+                )
+            except ValueError as e:
+                logger.error("Invalid heartbeat cron, scheduler not started: %s", e)
+                return
+        else:
+            if heartbeat_enabled:
                 logger.warning(
                     "HEARTBEAT_ENABLED=true but heartbeat_handler or db is None — "
-                    "evaluative heartbeat not scheduled; legacy crons not run. Check initialisation."
+                    "falling back to legacy briefing/check-in crons. Check initialisation."
                 )
-            else:
-                try:
-                    heartbeat_cron = getattr(settings, "heartbeat_cron", "*/30 * * * *")
-                    heartbeat_trigger = _parse_cron(heartbeat_cron)
-                    from .heartbeat import run_heartbeat_job
-
-                    def _primary_user_id() -> int | None:
-                        users = getattr(settings, "telegram_allowed_users", None) or []
-                        return int(users[0]) if users else None
-
-                    async def _heartbeat_job() -> None:
-                        await run_heartbeat_job(
-                            self._heartbeat_handler,
-                            self._db,
-                            _read_primary_chat_id,
-                            _primary_user_id,
-                        )
-
-                    self._scheduler.add_job(
-                        _heartbeat_job,
-                        trigger=heartbeat_trigger,
-                        id="evaluative_heartbeat",
-                        replace_existing=True,
-                        misfire_grace_time=600,
-                        coalesce=True,
-                    )
-                    logger.info(
-                        "Proactive scheduler: evaluative heartbeat only (cron: %s); legacy briefing/check-in crons disabled",
-                        heartbeat_cron,
-                    )
-                except ValueError as e:
-                    logger.error("Invalid heartbeat cron, scheduler not started: %s", e)
-                    return
-        else:
             try:
                 briefing_trigger = _parse_cron(settings.briefing_cron)
                 checkin_trigger = _parse_cron(settings.checkin_cron)
@@ -278,7 +282,7 @@ class ProactiveScheduler:
                 coalesce=True,
             )
             logger.info(
-                "Proactive scheduler: legacy briefing/check-in crons (HEARTBEAT_ENABLED=false)"
+                "Proactive scheduler: legacy briefing/check-in crons (heartbeat not active)"
             )
         # Monthly retrospective — fires on the last day of each month at 18:00
         self._scheduler.add_job(
@@ -384,11 +388,7 @@ class ProactiveScheduler:
         )
 
         self._scheduler.start()
-        if (
-            heartbeat_enabled
-            and self._heartbeat_handler is not None
-            and self._db is not None
-        ):
+        if heartbeat_ready:
             logger.info(
                 "Proactive scheduler started — evaluative heartbeat (tz: %s)",
                 settings.scheduler_timezone,
@@ -462,7 +462,12 @@ class ProactiveScheduler:
 
         jobs_to_fire: list[tuple[str, str]] = []  # (job_id, delay_reason)
         heartbeat_enabled = getattr(settings, "heartbeat_enabled", True)
-        if not heartbeat_enabled:
+        heartbeat_ready = (
+            heartbeat_enabled
+            and self._heartbeat_handler is not None
+            and self._db is not None
+        )
+        if not heartbeat_ready:
             if (
                 current_hour >= _cron_hour(afternoon_cron)
                 and log.get("afternoon_focus") != today
