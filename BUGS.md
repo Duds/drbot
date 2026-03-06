@@ -1,6 +1,6 @@
 # Remy Bug Report
 
-_Last updated: 2026-03-05_
+_Last updated: 2026-03-06_
 
 Archived bugs 1–41 (all fixed) → [docs/archive/BUGS-archived-2026-03-04.md](docs/archive/BUGS-archived-2026-03-04.md)
 
@@ -161,3 +161,26 @@ Archived bugs 1–41 (all fixed) → [docs/archive/BUGS-archived-2026-03-04.md](
   3. Add a unit test with known-bad MarkdownV2 strings (e.g. `*bold*.` and `_italic_,`) to confirm the escaper handles them without breaking entity parsing.
   4. Add a DEBUG log of the raw MarkdownV2 string before send so failures can be diagnosed without guessing.
 - **Reported:** 2026-03-04 (Dale Rogers — from log analysis)
+
+---
+
+## Bug 11: Event loop congestion causes APScheduler job misses, 11-minute message delay, and Telegram disconnect
+
+- **Symptom:** User message ("Hey Bae ❤️") took approximately 11 minutes to receive a reply. APScheduler logged two heartbeat job misses (12m09s and 14m01s behind schedule). Relay inbox poll also missed by 46s. Telegram subsequently disconnected with `RemoteProtocolError: Server disconnected without sending a response`.
+- **Evidence from logs (session 2026-03-06):**
+  - `[WARNING] apscheduler.executors.default: Run time of job "_heartbeat_job (trigger: cron[minute='*/30'])" was missed by 0:12:09.769199`
+  - `[WARNING] apscheduler.executors.default: Run time of job "_heartbeat_job (trigger: cron[minute='*/30'])" was missed by 0:14:01.943538`
+  - `[WARNING] apscheduler.executors.default: Run time of job "_poll_relay_inbox (trigger: interval[0:01:00])" was missed by 0:00:46.878906`
+  - `[WARNING] remy.bot.telegram_bot: Telegram transient error: httpx.RemoteProtocolError: Server disconnected without sending a response`
+- **Root cause (hypothesis):** APScheduler is sharing the same asyncio event loop as message handling. A long Claude response (the "Model Routing Observability Report" — multiple tool calls, large output) blocked the event loop for the duration of generation. Scheduled jobs queued behind it were unable to fire. By the time the loop cleared, Telegram had dropped the connection due to inactivity. The subsequent "Hey Bae" message sat unprocessed until reconnection completed.
+- **Impact:** High. 11-minute response delay is severe UX degradation. User has no visibility that the bot is alive or processing. Missed heartbeat jobs mean proactive check-ins and relay polling silently stop during long responses.
+- **Priority:** High
+- **Status:** ✅ Fixed
+- **Location:**
+  - `remy/scheduler/proactive.py` (APScheduler setup, `_heartbeat_job`, `_poll_relay_inbox`)
+  - `remy/ai/claude_client.py` (long-running stream blocking event loop)
+  - `remy/bot/handlers/chat.py` (stream event loop)
+- **Fix:** (1) **Yield event loop during streaming** — In `stream_with_tools` (`remy/ai/claude_client.py`), after each yielded event (TextChunk, ToolStatusChunk) call `await asyncio.sleep(0)` so the event loop can run other tasks; every 15 yields call `await asyncio.sleep(0.05)` to give APScheduler a short time slice. In the chat handler (`remy/bot/handlers/chat.py`), every 15 stream events call `await asyncio.sleep(0.05)` so scheduler jobs can run during long responses. (2) **Job-miss watchdog** — In `remy/scheduler/proactive.py`, added a listener for `EVENT_JOB_MISSED`: if a job was missed by ≥60 seconds, log at ERROR with job_id and scheduled_run_time (event-loop congestion signal); otherwise log at WARNING. This improves visibility when the event loop is congested.
+- **Related:** Bug 10 (MarkdownV2 entity error → retry loop → Telegram disconnect — similar disconnect symptom via different trigger)
+- **Reported:** 2026-03-06 (Dale Rogers — 11-minute reply delay observed in conversation)
+- **Fixed:** 2026-03-06

@@ -24,6 +24,7 @@ from zoneinfo import ZoneInfo
 
 from typing import TYPE_CHECKING
 
+from apscheduler.events import EVENT_JOB_MISSED, JobExecutionEvent
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
@@ -387,6 +388,34 @@ class ProactiveScheduler:
             coalesce=True,
         )
 
+        # Bug 11: log at ERROR when a job is missed by >60s (event-loop congestion signal)
+        def _on_job_missed(event: JobExecutionEvent) -> None:
+            scheduled = getattr(event, "scheduled_run_time", None)
+            if scheduled is None:
+                logger.error(
+                    "APScheduler job missed: job_id=%s (no scheduled_run_time)",
+                    event.job_id,
+                )
+                return
+            now = datetime.now(
+                scheduled.tzinfo if getattr(scheduled, "tzinfo", None) else timezone.utc
+            )
+            delta = (now - scheduled).total_seconds()
+            if delta >= 60:
+                logger.error(
+                    "APScheduler job missed by %.0fs (event loop congestion): job_id=%s scheduled_run_time=%s",
+                    delta,
+                    event.job_id,
+                    scheduled,
+                )
+            else:
+                logger.warning(
+                    "APScheduler job missed by %.0fs: job_id=%s",
+                    delta,
+                    event.job_id,
+                )
+
+        self._scheduler.add_listener(_on_job_missed, EVENT_JOB_MISSED)
         self._scheduler.start()
         if heartbeat_ready:
             logger.info(

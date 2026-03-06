@@ -277,7 +277,10 @@ class ClaudeClient:
                         tools=tools_with_cache,  # type: ignore[arg-type]
                     ) as stream:
                         # Iterate raw events so we don't exhaust the generator before
-                        # calling stream.get_final_message() below
+                        # calling stream.get_final_message() below.
+                        # Yield event loop periodically (Bug 11) so APScheduler and
+                        # other tasks can run during long streams.
+                        stream_yield_count = 0
                         async for event in stream:
                             event_type = type(event).__name__
 
@@ -291,6 +294,10 @@ class ClaudeClient:
                                     chunk = delta.text
                                     text_buffer.append(chunk)
                                     yield TextChunk(text=chunk)
+                                    stream_yield_count += 1
+                                    await asyncio.sleep(0)
+                                    if stream_yield_count % 15 == 0:
+                                        await asyncio.sleep(0.05)
 
                             # Tool use block starting
                             elif event_type == "RawContentBlockStartEvent":
@@ -301,6 +308,10 @@ class ClaudeClient:
                                         tool_use_id=block.id,
                                         tool_input={},
                                     )
+                                    stream_yield_count += 1
+                                    await asyncio.sleep(0)
+                                    if stream_yield_count % 15 == 0:
+                                        await asyncio.sleep(0.05)
 
                         # After streaming, get the final message snapshot for tool_use blocks
                         final_msg = await stream.get_final_message()

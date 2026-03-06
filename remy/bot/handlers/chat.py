@@ -318,6 +318,7 @@ def make_chat_handlers(
                 safe_messages = _sanitize_messages_for_claude(messages)
 
                 try:
+                    event_count = 0
                     async for event in claude_client.stream_with_tools(
                         messages=safe_messages,
                         tool_registry=tool_registry,
@@ -328,6 +329,10 @@ def make_chat_handlers(
                         message_id=message_id,
                         model=stream_model,
                     ):
+                        # Bug 11: yield event loop periodically so APScheduler can run
+                        event_count += 1
+                        if event_count % 15 == 0:
+                            await asyncio.sleep(0.05)
                         if not ttft_recorded:
                             ttft_timer.stop()
                             ttft_recorded = True
