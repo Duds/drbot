@@ -126,7 +126,10 @@ async def exec_react_to_message(
     chat_id: int | None,
     message_id: int | None,
 ) -> str:
-    """Set an emoji reaction on Dale's most recent Telegram message."""
+    """Set an emoji reaction on Dale's most recent Telegram message.
+    Allowlist aligned with Telegram Bot API (telegram.constants.ReactionEmoji).
+    Not in API: 🍆 🍒 🍑 💥 💦; ⚡️ is normalised to ⚡.
+    """
     ALLOWED_EMOJI = {
         "👍",
         "👎",
@@ -142,9 +145,12 @@ async def exec_react_to_message(
         "🙏",
         "😍",
         "🤝",
+        "⚡",  # HIGH_VOLTAGE_SIGN; API uses ⚡ not ⚡️
     }
 
     emoji = tool_input.get("emoji", "").strip()
+    if emoji == "⚡️":
+        emoji = "⚡"  # Telegram API expects ⚡ (no variation selector)
     if not emoji:
         return "No emoji specified."
     if emoji not in ALLOWED_EMOJI:

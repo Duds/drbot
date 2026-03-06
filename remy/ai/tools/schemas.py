@@ -2089,7 +2089,7 @@ TOOL_SCHEMAS: list[dict] = [
             "Use it ALONGSIDE a text reply when tone warrants it (e.g. react ❤️ then give a warm response). "
             "Do NOT react to every message — only when a reaction adds genuine meaning. "
             "Never react AND send a hollow one-liner that says the same thing as the reaction. "
-            "Allowed emoji: 👍 👎 ❤️ 🔥 🤔 👀 🎉 🤩 🤣 👏 😁 🙏 😍 🤝"
+            "Allowed emoji: 👍 👎 ❤️ 🔥 🤔 👀 🎉 🤩 🤣 👏 😁 🙏 😍 🤝 ⚡"
         ),
         "input_schema": {
             "type": "object",
@@ -2097,7 +2097,7 @@ TOOL_SCHEMAS: list[dict] = [
                 "emoji": {
                     "type": "string",
                     "description": (
-                        "The emoji to react with. Must be one of: 👍 👎 ❤️ 🔥 🤔 👀 🎉 🤩 🤣 👏 😁 🙏 😍 🤝. "
+                        "The emoji to react with. Must be one of: 👍 👎 ❤️ 🔥 🤔 👀 🎉 🤩 🤣 👏 😁 🙏 😍 🤝 ⚡. "
                         "Choose based on the emotional register of the message:\n"
                         "👍 — acknowledged, will do, understood\n"
                         "👎 — disagree, not for me (honest pushback)\n"
@@ -2112,7 +2112,8 @@ TOOL_SCHEMAS: list[dict] = [
                         "😁 — beaming, love it\n"
                         "🙏 — thanks, please, grateful\n"
                         "😍 — heart eyes, strong approval\n"
-                        "🤝 — handshake, deal, agreed"
+                        "🤝 — handshake, deal, agreed\n"
+                        "⚡ — lightning, quick, energy, zap"
                     ),
                 },
             },
