@@ -177,3 +177,67 @@ Agents have explicit permissions. `canCreateTasks` controls whether an agent can
 | Outgoing webhooks | High | Low | ⭐ |
 | `canCreateTasks` permission flag | Low | Low | ⭐ |
 | Portable SOUL templates | Low | Low | ⭐ |
+
+---
+
+## Addendum: Additional Patterns from Paperclip Docs
+
+*(Sourced from `docs/guides/agent-developer/` — found during deeper crawl)*
+
+### Skill Files per Task Type
+
+Paperclip skills use YAML frontmatter as routing metadata:
+```yaml
+---
+name: gmail-labeling
+description: |
+  Use when: applying Gmail labels from a query or label spec.
+  Avoid when: you need to read email content (use gmail-audit instead).
+---
+```
+The agent reads skill metadata first, then decides whether to load full instructions. This keeps context lean. **Remy could add `config/skills/gmail-label/SKILL.md`, `config/skills/gmail-audit/SKILL.md`, etc.**
+
+### Session-End Audit Note
+
+Post a `relay_post_note` at the end of every session summarizing what was done:
+```python
+relay_post_note(
+    from_agent="remy",
+    content="Session 2026-03-08: labelled 47 emails (4-Personal), trashed 12 LinkedIn. 1 task needs_clarification (label missing).",
+    tags=["session-log", "2026-03-08", "gmail"]
+)
+```
+Creates a searchable audit trail across sessions. **Already possible with Remy's relay tools — just needs to be added to CLAUDE.md as a closing step.**
+
+### Decision Documentation
+
+When Remy makes a non-obvious call (e.g. skipping a missing label instead of creating it), post a note:
+```python
+relay_post_note(
+    from_agent="remy",
+    content="Decision: skipped label '5-Hobbies' — not found, didn't create to avoid polluting label list.",
+    tags=["decision", "gmail", "2026-03-08"]
+)
+```
+Builds a record of judgment calls cowork can review.
+
+### @-Mention Discipline
+
+Paperclip enforces: **messages = FYIs / clarifications; tasks = authoritative work units.** Don't use `relay_post_message` to create assignments — use `relay_update_task`. Each message to cowork costs budget and triggers a heartbeat. Reserve messages for genuine blockers or handoffs.
+
+### "Never Silent on Blocked Work"
+
+Before setting a task to `needs_clarification`, always:
+1. Update the task with specific notes explaining what's missing
+2. Post a message to cowork with a suggested resolution option
+3. Never just leave a task in `in_progress` without a comment
+
+This prevents zombie tasks and gives cowork enough context to unblock without back-and-forth.
+
+### Sources (Paperclip docs)
+
+- [heartbeat-protocol.md](https://github.com/paperclipai/paperclip/blob/master/docs/guides/agent-developer/heartbeat-protocol.md)
+- [task-workflow.md](https://github.com/paperclipai/paperclip/blob/master/docs/guides/agent-developer/task-workflow.md)
+- [comments-and-communication.md](https://github.com/paperclipai/paperclip/blob/master/docs/guides/agent-developer/comments-and-communication.md)
+- [writing-a-skill.md](https://github.com/paperclipai/paperclip/blob/master/docs/guides/agent-developer/writing-a-skill.md)
+- [adapters/overview.md](https://github.com/paperclipai/paperclip/blob/master/docs/adapters/overview.md)
