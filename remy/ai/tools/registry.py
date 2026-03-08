@@ -34,6 +34,7 @@ class ToolRegistry:
         knowledge_store=None,
         knowledge_extractor=None,
         board_orchestrator=None,
+        task_runner=None,
         claude_client=None,
         ollama_base_url: str = "http://localhost:11434",
         model_complex: str = "claude-sonnet-4-6",
@@ -57,6 +58,7 @@ class ToolRegistry:
         self._knowledge_store = knowledge_store
         self._knowledge_extractor = knowledge_extractor
         self._board_orchestrator = board_orchestrator
+        self._task_runner = task_runner
         self._claude_client = claude_client
         self._mistral_client = mistral_client
         self._moonshot_client = moonshot_client
