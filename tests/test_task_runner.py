@@ -235,6 +235,22 @@ def test_make_worker_returns_code_agent():
     assert isinstance(worker, CodeAgent)
 
 
+def test_make_worker_returns_board_worker():
+    from remy.agents.workers.board import BoardWorker
+
+    mock_runner = MagicMock()
+    mock_runner._board_orchestrator = MagicMock()  # board orchestrator present
+    worker = _make_worker("board", db=MagicMock(), runner=mock_runner)
+    assert isinstance(worker, BoardWorker)
+
+
+def test_make_worker_board_raises_without_orchestrator():
+    mock_runner = MagicMock()
+    mock_runner._board_orchestrator = None  # not configured
+    with pytest.raises(ValueError, match="board_orchestrator"):
+        _make_worker("board", db=MagicMock(), runner=mock_runner)
+
+
 def test_make_worker_raises_for_unknown_type():
     with pytest.raises(ValueError, match="Unknown worker_type"):
         _make_worker("unknown", db=MagicMock(), runner=MagicMock())

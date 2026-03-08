@@ -18,6 +18,7 @@ from ..config import settings
 
 if TYPE_CHECKING:
     from ..memory.database import DatabaseManager
+    from .orchestrator import BoardOrchestrator
 
 logger = logging.getLogger(__name__)
 
@@ -33,8 +34,13 @@ class TaskRunner:
     Failed tasks are never retried automatically; they surface to Remy via heartbeat.
     """
 
-    def __init__(self, db: "DatabaseManager") -> None:
+    def __init__(
+        self,
+        db: "DatabaseManager",
+        board_orchestrator: "BoardOrchestrator | None" = None,
+    ) -> None:
         self._db = db
+        self._board_orchestrator = board_orchestrator
         # task_id → live asyncio.Task (in-memory only; persisted state is in SQLite)
         self._active: dict[str, asyncio.Task] = {}
 
@@ -238,4 +244,13 @@ def _make_worker(
         from .workers.code import CodeAgent
 
         return CodeAgent(db=db)
+    if worker_type == "board":
+        from .workers.board import BoardWorker
+
+        if runner._board_orchestrator is None:
+            raise ValueError(
+                "Cannot spawn board worker: TaskRunner has no board_orchestrator. "
+                "Pass board_orchestrator= when constructing TaskRunner."
+            )
+        return BoardWorker(db=db, board_orchestrator=runner._board_orchestrator)
     raise ValueError(f"Unknown worker_type: {worker_type!r}")
