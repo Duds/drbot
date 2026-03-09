@@ -18,6 +18,8 @@ services:
       - ./data:/app/data
       - ./config:/app/config
       - ${HOME}/.config/gcloud:/home/remy/.config/gcloud:ro
+      # Claude Code CLI auth & config (so run_claude_code uses your existing authorisation)
+      - ${HOME}/.claude:/home/remy/.claude:ro
       - ${HOME}/Projects:/home/remy/Projects
       - ${HOME}/Documents:/home/remy/Documents:ro
       - ${HOME}/Downloads:/home/remy/Downloads

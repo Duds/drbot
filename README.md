@@ -56,6 +56,8 @@ All configuration is via `.env`. Copy `.env.example` to get started.
 | `SCHEDULER_TIMEZONE` | — | Timezone for scheduler (default: `Australia/Sydney`) |
 | `BRIEFING_EMAIL_SCOPE` | — | Morning briefing: `inbox_only` \| `primary_tabs` \| `all_mail`. Heartbeat always uses all mail for unread count (default: `all_mail`) |
 | `LOG_LEVEL` | — | Logging level (default: `INFO`) |
+| `CHUNK_LOG_ENABLED` | — | When `true`, log every stream event (agents, tools, sends, replies) to JSONL (default: `false`) |
+| `CHUNK_LOG_PATH` | — | Path for chunk log file (default: `data/logs/chunk_log.jsonl`) |
 | `HF_TOKEN` | — | HuggingFace token — prevents rate limiting on embedding model downloads |
 | `HEALTH_API_TOKEN` | — | Bearer token protecting `/logs` and `/telemetry` endpoints |
 | `FILE_LINK_BASE_URL` | — | Public base URL for secure file download links (e.g. `https://remy.dalerogers.com.au`); empty = disabled |
@@ -98,6 +100,8 @@ This stores tokens in `data/google_token.json`. The Docker container picks them 
 | `relay` | 8765 (localhost only) | Relay MCP — inter-agent communication (Claude Code) |
 | `ollama` | 11434 | Local LLM fallback |
 | `cloudflared` | — | Cloudflare Tunnel (optional — `--profile tunnel`) |
+
+The `remy` image includes Node.js and the **Claude Code CLI** (`@anthropic-ai/claude-code`) so the `run_claude_code` sub-agent tool works in Docker without extra setup.
 
 ---
 

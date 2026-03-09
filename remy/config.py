@@ -75,6 +75,9 @@ class Settings(BaseSettings):
 
     # Logging
     log_level: str = "INFO"
+    # Optional JSONL log of every stream chunk (agents, tools, sends, replies)
+    chunk_log_enabled: bool = False
+    chunk_log_path: str = ""  # default: logs_dir/chunk_log.jsonl
 
     # Scheduler (cron in user's local timezone)
     briefing_cron: str = "0 7 * * *"
@@ -217,12 +220,12 @@ class Settings(BaseSettings):
     workspace_root: str = ""
 
     # ── Sub-agent orchestration (SAD v10 §11) ───────────────────────────────────
-    subagent_max_workers: int = 5         # Maximum concurrent asyncio worker tasks
-    subagent_max_depth: int = 2           # Maximum spawn depth (orchestrator → worker)
-    subagent_max_children: int = 3        # Maximum child workers per parent (research only)
-    subagent_stall_minutes: int = 30      # Minutes before a running task is marked stalled
-    subagent_worker_model: str = "mistral"                       # Tier 1 — worker execution
-    subagent_synth_model: str = "claude-sonnet-4-20250514"       # Tier 2 — synthesis
+    subagent_max_workers: int = 5  # Maximum concurrent asyncio worker tasks
+    subagent_max_depth: int = 2  # Maximum spawn depth (orchestrator → worker)
+    subagent_max_children: int = 3  # Maximum child workers per parent (research only)
+    subagent_stall_minutes: int = 30  # Minutes before a running task is marked stalled
+    subagent_worker_model: str = "mistral"  # Tier 1 — worker execution
+    subagent_synth_model: str = "claude-sonnet-4-20250514"  # Tier 2 — synthesis
     task_md_path: str = "config/TASK.md"  # Orchestrator behaviour config
 
     # ── Relay (US-claude-desktop-relay, US-relay-shared-backend) ───────────────
@@ -236,8 +239,12 @@ class Settings(BaseSettings):
 
     # ── Monthly budget enforcement (paperclip-ideas §5) ─────────────────────
     # Set to 0 to disable. Costs computed from api_calls table (Anthropic only).
-    monthly_budget_aud: float = Field(default=80.0, description="Monthly LLM spend cap in AUD (0 = disabled)")
-    budget_warning_pct: float = Field(default=0.80, description="Warn once per day at this fraction of monthly budget")
+    monthly_budget_aud: float = Field(
+        default=80.0, description="Monthly LLM spend cap in AUD (0 = disabled)"
+    )
+    budget_warning_pct: float = Field(
+        default=0.80, description="Warn once per day at this fraction of monthly budget"
+    )
 
     @property
     def relay_db_path_resolved(self) -> str:

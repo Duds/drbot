@@ -21,6 +21,8 @@ import anthropic
 from ..config import settings
 from ..models import TokenUsage
 
+from . import chunk_logger
+
 logger = logging.getLogger(__name__)
 
 # Maximum retry attempts on transient errors
@@ -281,6 +283,12 @@ class ClaudeClient:
         working_messages = list(messages)
         accumulated_usage = TokenUsage()
         hand_off_topic = _last_user_text_from_messages(messages)
+        chunk_logger.log_session_start(
+            user_id=user_id,
+            chat_id=chat_id,
+            message_id=message_id,
+            message_preview=hand_off_topic or "",
+        )
 
         max_iterations = settings.anthropic_max_tool_iterations
         for iteration in range(max_iterations):
@@ -330,7 +338,15 @@ class ClaudeClient:
                                 ):
                                     chunk = delta.text
                                     text_buffer.append(chunk)
-                                    yield TextChunk(text=chunk)
+                                    ev = TextChunk(text=chunk)
+                                    yield ev
+                                    chunk_logger.log_stream_event(
+                                        ev,
+                                        user_id=user_id,
+                                        chat_id=chat_id,
+                                        message_id=message_id,
+                                        iteration=iteration,
+                                    )
                                     stream_yield_count += 1
                                     await asyncio.sleep(0)
                                     if stream_yield_count % 15 == 0:
@@ -340,10 +356,18 @@ class ClaudeClient:
                             elif event_type == "RawContentBlockStartEvent":
                                 block = getattr(event, "content_block", None)
                                 if block and getattr(block, "type", None) == "tool_use":
-                                    yield ToolStatusChunk(
+                                    ev = ToolStatusChunk(
                                         tool_name=block.name,
                                         tool_use_id=block.id,
                                         tool_input={},
+                                    )
+                                    yield ev
+                                    chunk_logger.log_stream_event(
+                                        ev,
+                                        user_id=user_id,
+                                        chat_id=chat_id,
+                                        message_id=message_id,
+                                        iteration=iteration,
                                     )
                                     stream_yield_count += 1
                                     await asyncio.sleep(0)
@@ -498,6 +522,15 @@ class ClaudeClient:
                             tool_use_id,
                             user_id,
                         )
+                        chunk_logger.log_tool_invoke(
+                            tool_name=tool_name,
+                            tool_use_id=tool_use_id,
+                            tool_input=tool_input,
+                            user_id=user_id,
+                            chat_id=chat_id,
+                            message_id=message_id,
+                            iteration=iteration,
+                        )
                         try:
                             result = await tool_registry.dispatch(
                                 tool_name, tool_input, user_id, chat_id, message_id
@@ -518,6 +551,15 @@ class ClaudeClient:
                         tool_use_id,
                         user_id,
                     )
+                    chunk_logger.log_tool_invoke(
+                        tool_name=tool_name,
+                        tool_use_id=tool_use_id,
+                        tool_input=tool_input,
+                        user_id=user_id,
+                        chat_id=chat_id,
+                        message_id=message_id,
+                        iteration=iteration,
+                    )
                     try:
                         result = await tool_registry.dispatch(
                             tool_name, tool_input, user_id, chat_id, message_id
@@ -532,10 +574,18 @@ class ClaudeClient:
                         )
                         result = f"Tool '{tool_name}' encountered an error: {exc}"
 
-                yield ToolResultChunk(
+                ev = ToolResultChunk(
                     tool_name=tool_name,
                     tool_use_id=tool_use_id,
                     result=result,
+                )
+                yield ev
+                chunk_logger.log_stream_event(
+                    ev,
+                    user_id=user_id,
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    iteration=iteration,
                 )
 
                 tool_result_blocks.append(
@@ -547,9 +597,17 @@ class ClaudeClient:
                 )
 
             # Emit ToolTurnComplete with raw blocks for conversation history
-            yield ToolTurnComplete(
+            ev = ToolTurnComplete(
                 assistant_blocks=assistant_content_blocks,
                 tool_result_blocks=tool_result_blocks,
+            )
+            yield ev
+            chunk_logger.log_stream_event(
+                ev,
+                user_id=user_id,
+                chat_id=chat_id,
+                message_id=message_id,
+                iteration=iteration,
             )
 
             # Append assistant turn + tool results to working messages, then loop
@@ -581,8 +639,27 @@ class ClaudeClient:
             extra={"user_id": user_id, "iterations": max_iterations},
         )
         # Hand off to sub-agent (Board) instead of step-limit message (consolidation)
-        yield TextChunk(text="\n\n_Handing off to the Board to continue._")
-        yield HandOffToSubAgent(topic=hand_off_topic or "Continue from previous turn")
+        handoff_text = "\n\n_Handing off to the Board to continue._"
+        handoff_ev = TextChunk(text=handoff_text)
+        yield handoff_ev
+        chunk_logger.log_stream_event(
+            handoff_ev,
+            user_id=user_id,
+            chat_id=chat_id,
+            message_id=message_id,
+            iteration=max_iterations - 1,
+        )
+        handoff_sub = HandOffToSubAgent(
+            topic=hand_off_topic or "Continue from previous turn"
+        )
+        yield handoff_sub
+        chunk_logger.log_stream_event(
+            handoff_sub,
+            user_id=user_id,
+            chat_id=chat_id,
+            message_id=message_id,
+            iteration=max_iterations - 1,
+        )
 
     async def complete(
         self,

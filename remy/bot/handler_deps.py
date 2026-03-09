@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from ..memory.plans import PlanStore
     from ..memory.automations import AutomationStore
     from ..memory.background_jobs import BackgroundJobStore
+    from ..agents.agent_task_lifecycle import AgentTaskStore
     from ..scheduler.proactive import ProactiveScheduler
     from ..google.calendar import CalendarClient
     from ..google.gmail import GmailClient
@@ -58,6 +59,7 @@ class SchedulerDeps:
     scheduler_ref: dict | None = None
     automation_store: "AutomationStore | None" = None
     job_store: "BackgroundJobStore | None" = None
+    agent_task_store: "AgentTaskStore | None" = None
 
 
 @dataclass(frozen=False)

@@ -9,6 +9,7 @@ import os
 import signal
 from pathlib import Path
 
+from .agents.agent_task_lifecycle import AgentTaskStore
 from .agents.orchestrator import BoardOrchestrator
 from .ai.claude_client import ClaudeClient
 from .ai.mistral_client import MistralClient
@@ -142,6 +143,7 @@ def main() -> None:
     )
     automation_store = AutomationStore(db)
     job_store = BackgroundJobStore(db)
+    agent_task_store = AgentTaskStore(db)
     plan_store = PlanStore(db)
     conv_analyzer = ConversationAnalyzer(conv_store, db)
 
@@ -302,6 +304,7 @@ def main() -> None:
         scheduler_ref=startup_ctx,  # type: ignore[arg-type]
         automation_store=automation_store,
         job_store=job_store,
+        agent_task_store=agent_task_store,
     )
     core_deps = CoreDeps(
         board_orchestrator=board_orchestrator,

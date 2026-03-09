@@ -666,3 +666,101 @@ async def test_web_search_cap_per_turn_fourth_returns_cap_message():
     assert "Web search limit reached" in result_chunks[3].result
     assert "3 per turn" in result_chunks[3].result
     assert tool_registry.dispatch.call_count == 3
+
+
+@pytest.mark.asyncio
+async def test_stream_with_tools_sequence_trace_multi_tool_then_reply():
+    """
+    Step-through proof: mock returns tool_use then end_turn; record event and
+    dispatch sequence so we can assert the order (agent loop + tool calling).
+    """
+    tool_block = MagicMock()
+    tool_block.type = "tool_use"
+    tool_block.id = "toolu_1"
+    tool_block.name = "get_current_time"
+    tool_block.input = {}
+
+    final_tool = MagicMock()
+    final_tool.stop_reason = "tool_use"
+    final_tool.content = [tool_block]
+    final_tool.usage = MagicMock(
+        input_tokens=10,
+        output_tokens=5,
+        cache_creation_input_tokens=0,
+        cache_read_input_tokens=0,
+    )
+
+    async def fake_tool_iter():
+        yield _make_stream_event("RawContentBlockStartEvent", content_block=tool_block)
+
+    mock_stream_tool = MagicMock()
+    mock_stream_tool.__aenter__ = AsyncMock(return_value=mock_stream_tool)
+    mock_stream_tool.__aexit__ = AsyncMock(return_value=False)
+    mock_stream_tool.__aiter__ = lambda self: fake_tool_iter().__aiter__()
+    mock_stream_tool.get_final_message = AsyncMock(return_value=final_tool)
+
+    end_msg = MagicMock()
+    end_msg.stop_reason = "end_turn"
+    end_msg.content = [MagicMock(type="text", text="The time is 10:00.")]
+    end_msg.usage = MagicMock(
+        input_tokens=10,
+        output_tokens=5,
+        cache_creation_input_tokens=0,
+        cache_read_input_tokens=0,
+    )
+
+    async def fake_end_iter():
+        yield _make_stream_event(
+            "RawContentBlockDeltaEvent",
+            delta=MagicMock(type="text_delta", text="The time is 10:00."),
+        )
+
+    mock_stream_end = MagicMock()
+    mock_stream_end.__aenter__ = AsyncMock(return_value=mock_stream_end)
+    mock_stream_end.__aexit__ = AsyncMock(return_value=False)
+    mock_stream_end.__aiter__ = lambda self: fake_end_iter().__aiter__()
+    mock_stream_end.get_final_message = AsyncMock(return_value=end_msg)
+
+    tool_registry = make_registry()
+    dispatch_calls: list[tuple[str, dict]] = []
+
+    async def record_dispatch(
+        name: str,
+        inp: dict,
+        uid: int,
+        chat_id: int | None = None,
+        message_id: int | None = None,
+    ) -> str:
+        dispatch_calls.append((name, inp))
+        if name == "get_current_time":
+            return "2026-03-10 14:30 Australia/Canberra"
+        return "ok"
+
+    tool_registry.dispatch = AsyncMock(side_effect=record_dispatch)
+
+    client = ClaudeClient.__new__(ClaudeClient)
+    client._client = MagicMock()
+    client._client.messages.stream = MagicMock(
+        side_effect=[mock_stream_tool, mock_stream_end]
+    )
+
+    with patch("remy.ai.claude_client.settings") as mock_settings:
+        mock_settings.anthropic_max_tool_iterations = 6
+        mock_settings.anthropic_max_tokens = 4096
+        event_sequence: list[str] = []
+        async for event in client.stream_with_tools(
+            messages=[{"role": "user", "content": "What time is it?"}],
+            tool_registry=tool_registry,
+            user_id=USER_ID,
+        ):
+            event_sequence.append(type(event).__name__)
+
+    assert "ToolStatusChunk" in event_sequence
+    assert "ToolTurnComplete" in event_sequence
+    assert "TextChunk" in event_sequence
+    assert event_sequence.index("ToolStatusChunk") < event_sequence.index(
+        "ToolTurnComplete"
+    )
+    assert event_sequence.index("ToolTurnComplete") < event_sequence.index("TextChunk")
+    assert len(dispatch_calls) == 1
+    assert dispatch_calls[0][0] == "get_current_time"

@@ -141,6 +141,7 @@ def make_handlers(
             memory_injector=mem.memory_injector,
             automation_store=sched.automation_store,
             job_store=sched.job_store,
+            agent_task_store=sched.agent_task_store,
             proactive_scheduler=sched.proactive_scheduler,
             scheduler_ref=sched.scheduler_ref,  # type: ignore[arg-type]
         )

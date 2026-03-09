@@ -37,9 +37,13 @@ RUN --mount=type=secret,id=HF_TOKEN,env=HF_TOKEN \
 FROM python:3.12-slim AS runtime
 
 # ffmpeg required by faster-whisper; curl for healthcheck; git for git_log/git_diff/git_status (US-git-commits-and-diffs)
+# nodejs + npm for run_claude_code (Claude Code CLI sub-agent)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg curl git \
+    ffmpeg curl git nodejs npm \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Claude Code CLI so run_claude_code tool works in container (npx fallback if not on PATH)
+RUN npm install -g @anthropic-ai/claude-code
 
 # Create a non-root user for security
 RUN groupadd --gid 1001 remy && \

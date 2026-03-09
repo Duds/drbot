@@ -39,22 +39,41 @@ async def exec_run_claude_code(
         prompt_parts.append(f"\nWork in this directory: {repo_path}")
     prompt = "\n".join(prompt_parts)
 
-    args = [claude_path, "--print", "--no-ansi"]
-    cwd = repo_path if repo_path else None
+    # Prefer explicit path, then "claude" on PATH, then npx (no global install needed)
+    candidates: list[list[str]] = []
+    if claude_path and claude_path != "claude":
+        candidates.append([claude_path, "--print", "--no-ansi"])
+    candidates.append(["claude", "--print", "--no-ansi"])
+    candidates.append(
+        ["npx", "-y", "@anthropic-ai/claude-code", "--print", "--no-ansi"]
+    )
 
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *args,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=cwd,
+    cwd = repo_path if repo_path else None
+    proc = None
+
+    for args in candidates:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *args,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=cwd,
+            )
+            break
+        except FileNotFoundError:
+            logger.debug("Claude Code CLI not found: %s", args[0])
+            continue
+
+    if proc is None:
+        logger.warning(
+            "Claude Code CLI not found (tried: %s). Install with: npm install -g @anthropic-ai/claude-code, or ensure npx is on PATH.",
+            claude_path,
         )
-    except FileNotFoundError:
-        logger.warning("Claude Code CLI not found at %s", claude_path)
         return (
-            f"Claude Code CLI not found (tried: {claude_path}). "
-            "Install with: npm install -g @anthropic-ai/claude-code"
+            "Claude Code CLI not found (tried: "
+            + claude_path
+            + ", then npx). Install with: npm install -g @anthropic-ai/claude-code (or ensure Node/npx is on PATH so npx can run it)."
         )
 
     try:

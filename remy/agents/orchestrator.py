@@ -27,6 +27,8 @@ if TYPE_CHECKING:
     from ..ai.claude_client import ClaudeClient
     from .base_agent import SubAgent
 
+from ..ai import chunk_logger
+
 logger = logging.getLogger(__name__)
 
 # Telegram message length limit
@@ -88,18 +90,30 @@ class BoardOrchestrator:
             agent._current_user_id = user_id
             agent._current_session_key = session_key
             logger.info("[Board] Running agent: %s", agent.name)
+            chunk_logger.log_board_agent(
+                agent_name=agent.name,
+                phase="start",
+                user_id=user_id,
+            )
             try:
                 analysis = await agent.analyze(topic, thread, user_context)
             except Exception as exc:
                 logger.error("[Board] Agent %s failed: %s", agent.name, exc)
                 analysis = f"[{agent.name} analysis unavailable: {exc}]"
 
+            chunk_logger.log_board_agent(
+                agent_name=agent.name,
+                phase="done",
+                user_id=user_id,
+            )
             results.append((agent.name, analysis))
             # Append to thread for next agents to read
-            thread.append({
-                "role": "assistant",
-                "content": f"*{agent.name}*: {analysis}",
-            })
+            thread.append(
+                {
+                    "role": "assistant",
+                    "content": f"*{agent.name}*: {analysis}",
+                }
+            )
 
         return self._format_report(topic, results)
 
@@ -132,18 +146,29 @@ class BoardOrchestrator:
             yield f"{emoji} *{agent.name}* ({idx}/{agent_count})…\n"
             # Give the event loop a tick to let the progress update send
             await asyncio.sleep(0)
-
+            chunk_logger.log_board_agent(
+                agent_name=agent.name,
+                phase="start",
+                user_id=user_id,
+            )
             try:
                 analysis = await agent.analyze(topic, thread, user_context)
             except Exception as exc:
                 logger.error("[Board] Agent %s failed: %s", agent.name, exc)
                 analysis = f"[{agent.name} analysis unavailable: {exc}]"
 
+            chunk_logger.log_board_agent(
+                agent_name=agent.name,
+                phase="done",
+                user_id=user_id,
+            )
             results.append((agent.name, analysis))
-            thread.append({
-                "role": "assistant",
-                "content": f"*{agent.name}*: {analysis}",
-            })
+            thread.append(
+                {
+                    "role": "assistant",
+                    "content": f"*{agent.name}*: {analysis}",
+                }
+            )
 
             # Yield this agent's section immediately
             section = self._format_section(agent.name, analysis)

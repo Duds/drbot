@@ -21,6 +21,7 @@ from ..session import SessionManager
 from ...utils.telegram_formatting import format_telegram_message
 
 if TYPE_CHECKING:
+    from ...agents.agent_task_lifecycle import AgentTaskStore
     from ...agents.orchestrator import BoardOrchestrator
     from ...memory.automations import AutomationStore
     from ...memory.background_jobs import BackgroundJobStore
@@ -37,6 +38,7 @@ def make_automation_handlers(
     memory_injector: "MemoryInjector | None" = None,
     automation_store: "AutomationStore | None" = None,
     job_store: "BackgroundJobStore | None" = None,
+    agent_task_store: "AgentTaskStore | None" = None,
     proactive_scheduler: "ProactiveScheduler | None" = None,
     scheduler_ref: dict | None = None,
 ):
@@ -426,9 +428,25 @@ def make_automation_handlers(
                 chunks.append(chunk)
             return "".join(chunks)
 
+        # OpenClaw-style: claim agent_tasks slot (enforces max_workers / max_depth)
+        coro_to_run = _board_coro()
+        if agent_task_store is not None:
+            task_id = await agent_task_store.claim(
+                "board",
+                {"topic": topic, "user_id": user_id},
+                depth=0,
+            )
+            if task_id is None:
+                await wm.stop()
+                await update.message.reply_text(
+                    "Too many background tasks running; try again in a few minutes."
+                )
+                return
+            coro_to_run = agent_task_store.wrap_coro(task_id, coro_to_run)
+
         try:
             asyncio.create_task(
-                background_runner.run(_board_coro(), label="board analysis")
+                background_runner.run(coro_to_run, label="board analysis")
             )
         except RuntimeError as e:
             await wm.stop()

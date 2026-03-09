@@ -15,6 +15,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+from ..agents.agent_task_lifecycle import mark_stalled_tasks
 from ..config import settings
 from ..hooks import HookEvents, hook_manager
 from .heartbeat_config import load_heartbeat_config
@@ -113,7 +114,12 @@ async def check_budget(db, enqueue_message=None) -> dict:
             row = await cursor.fetchone()
     except Exception as e:
         logger.warning("Budget check failed (non-fatal): %s", e)
-        return {"month_aud": 0.0, "budget_aud": limit_aud, "pct": 0.0, "exhausted": False}
+        return {
+            "month_aud": 0.0,
+            "budget_aud": limit_aud,
+            "pct": 0.0,
+            "exhausted": False,
+        }
 
     inp_tokens = int(row[0]) if row else 0
     out_tokens = int(row[1]) if row else 0
@@ -130,19 +136,26 @@ async def check_budget(db, enqueue_message=None) -> dict:
                 enqueue_message(msg)
             except Exception:
                 pass
-        logger.warning("Monthly budget exhausted: A$%.2f / A$%.2f", month_aud, limit_aud)
+        logger.warning(
+            "Monthly budget exhausted: A$%.2f / A$%.2f", month_aud, limit_aud
+        )
     elif pct >= settings.budget_warning_pct:
         budget_exhausted = False
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         if today != _budget_warning_sent_date:
             _budget_warning_sent_date = today
             if enqueue_message:
-                msg = f"⚠️ LLM budget at {pct*100:.0f}% (A${month_aud:.2f}/A${limit_aud:.2f})."
+                msg = f"⚠️ LLM budget at {pct * 100:.0f}% (A${month_aud:.2f}/A${limit_aud:.2f})."
                 try:
                     enqueue_message(msg)
                 except Exception:
                     pass
-            logger.info("Budget warning: A$%.2f / A$%.2f (%.0f%%)", month_aud, limit_aud, pct * 100)
+            logger.info(
+                "Budget warning: A$%.2f / A$%.2f (%.0f%%)",
+                month_aud,
+                limit_aud,
+                pct * 100,
+            )
     else:
         budget_exhausted = False
 
@@ -262,6 +275,9 @@ async def run_heartbeat_job(
     # What we've already delivered today (so model can enforce "at most once per day" etc.)
     already_surfaced_today = await _get_already_surfaced_today(db, tz)
 
+    # Mark long-running agent_tasks as stalled (OpenClaw-style) so they surface below
+    await mark_stalled_tasks(db)
+
     # Agent Tasks: query unsurfaced done/failed/stalled tasks for heartbeat context
     agent_tasks_context: str | None = None
     unsurfaced_task_ids: list[str] = []
@@ -269,7 +285,7 @@ async def run_heartbeat_job(
         async with db.get_connection() as conn:
             cursor = await conn.execute(
                 """
-                SELECT task_id, worker_type, status, synthesis, error
+                SELECT task_id, worker_type, status, synthesis, error, result
                   FROM agent_tasks
                  WHERE status IN ('failed', 'stalled', 'done')
                    AND surfaced_to_remy = 0
@@ -281,7 +297,7 @@ async def run_heartbeat_job(
         if task_rows:
             lines: list[str] = []
             for row in task_rows:
-                tid, wtype, status, synthesis, error = row
+                tid, wtype, status, synthesis, error, result = row
                 unsurfaced_task_ids.append(tid)
                 if synthesis:
                     try:
@@ -289,13 +305,15 @@ async def run_heartbeat_job(
                         summary = syn.get("summary", "")[:200]
                     except Exception:
                         summary = synthesis[:200]
+                elif error:
+                    summary = error[:200]
+                elif result:
+                    summary = result[:200]
                 else:
-                    summary = error[:200] if error else "(no detail)"
-                lines.append(
-                    f"• [{status}] {wtype} task {tid[:8]}: {summary}"
-                )
-            agent_tasks_context = (
-                "Agent tasks requiring attention:\n" + "\n".join(lines)
+                    summary = "(no detail)"
+                lines.append(f"• [{status}] {wtype} task {tid[:8]}: {summary}")
+            agent_tasks_context = "Agent tasks requiring attention:\n" + "\n".join(
+                lines
             )
     except Exception as _at_err:
         logger.warning("Could not query agent_tasks for heartbeat: %s", _at_err)
@@ -321,9 +339,7 @@ async def run_heartbeat_job(
                 )
                 await conn.commit()
         except Exception as _mark_err:
-            logger.warning(
-                "Could not mark agent_tasks as surfaced: %s", _mark_err
-            )
+            logger.warning("Could not mark agent_tasks as surfaced: %s", _mark_err)
 
     fired_at = datetime.now(timezone.utc).isoformat()
     try:
