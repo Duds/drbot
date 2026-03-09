@@ -38,9 +38,9 @@ from .memory.counters import CounterStore
 from .memory.plans import PlanStore
 from .memory.database import DatabaseManager
 from .memory.embeddings import EmbeddingStore
-from .memory.facts import FactExtractor, FactStore
+from .memory.facts import FactStore
 from .memory.fts import FTSSearch
-from .memory.goals import GoalExtractor, GoalStore
+from .memory.goals import GoalStore
 from .memory.injector import MemoryInjector
 from .memory.knowledge import KnowledgeExtractor, KnowledgeStore
 from .memory.file_index import FileIndexer
@@ -121,9 +121,7 @@ def main() -> None:
     # Initialise memory components (database init is async; done in post_init)
     embeddings = EmbeddingStore(db)
     fact_store = FactStore(db, embeddings)
-    fact_extractor = FactExtractor(claude_client)
     goal_store = GoalStore(db, embeddings)
-    goal_extractor = GoalExtractor(claude_client)
     fts = FTSSearch(db)
     # Unified Knowledge Store (supersedes fact_store + goal_store for new data)
     knowledge_store = KnowledgeStore(db, embeddings)

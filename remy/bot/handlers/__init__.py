@@ -55,24 +55,7 @@ from ..handler_deps import CoreDeps, GoogleDeps, MemoryDeps, SchedulerDeps
 if TYPE_CHECKING:
     from ..session import SessionManager
     from ...ai.tools import ToolRegistry
-    from ...memory.conversations import ConversationStore
-    from ...memory.injector import MemoryInjector
-    from ...memory.facts import FactStore
-    from ...memory.goals import GoalStore
-    from ...memory.knowledge import KnowledgeStore
-    from ...memory.automations import AutomationStore
-    from ...memory.background_jobs import BackgroundJobStore
-    from ...memory.plans import PlanStore
     from ...memory.database import DatabaseManager
-    from ...agents.orchestrator import BoardOrchestrator
-    from ...scheduler.proactive import ProactiveScheduler
-    from ...analytics.analyzer import ConversationAnalyzer
-    from ...voice.transcriber import VoiceTranscriber
-    from ...google.calendar import CalendarClient
-    from ...google.gmail import GmailClient
-    from ...google.docs import DocsClient
-    from ...google.contacts import ContactsClient
-    from ...diagnostics import DiagnosticsRunner
 
 
 def make_handlers(

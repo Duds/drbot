@@ -445,8 +445,6 @@ def make_callback_handler(
                 add_labels: list[str] = pending.get("add_label_ids") or []
                 remove_labels: list[str] = pending.get("remove_label_ids") or []
                 try:
-                    from ...ai.tools.registry import ToolRegistry  # type: ignore[attr-defined]
-
                     if gmail := getattr(context.application, "_gmail_client", None):
                         if add_labels or remove_labels:
                             count = await gmail.modify_labels(

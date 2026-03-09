@@ -512,7 +512,9 @@ class KnowledgeStore:
                 )
             )
         if not rows:
-            raise ValueError(f"Knowledge item {old_item_id} not found for user {user_id}")
+            raise ValueError(
+                f"Knowledge item {old_item_id} not found for user {user_id}"
+            )
 
         old_entity_type = rows[0]["entity_type"]
         old_meta: dict = json.loads(rows[0]["metadata"])
@@ -529,10 +531,12 @@ class KnowledgeStore:
 
         # Insert replacement row
         from ..models import KnowledgeItem
-        from typing import cast, Literal
+        from typing import cast
 
         new_item = KnowledgeItem(
-            entity_type=cast("Literal['fact', 'goal', 'shopping_item']", old_entity_type),
+            entity_type=cast(
+                "Literal['fact', 'goal', 'shopping_item']", old_entity_type
+            ),
             content=new_content,
             metadata=merged_meta,
             confidence=1.0,

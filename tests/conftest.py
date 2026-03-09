@@ -7,7 +7,7 @@ import pytest
 
 def minimal_make_handlers_kwargs(**overrides):
     """Minimal kwargs for make_handlers() — use for tests that need a minimal setup."""
-    from remy.bot.handler_deps import CoreDeps, GoogleDeps, MemoryDeps, SchedulerDeps
+    from remy.bot.handler_deps import GoogleDeps, MemoryDeps
 
     base = {
         "session_manager": None,

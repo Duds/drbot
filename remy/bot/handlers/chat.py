@@ -59,7 +59,6 @@ from ...analytics.timing import RequestTiming, PhaseTimer
 from ...config import get_settings, settings
 from ...constants import DEADLINE_KEYWORDS
 from ...diagnostics import is_diagnostics_trigger
-from ...exceptions import ServiceUnavailableError
 from ...hooks import HookEvents, hook_manager
 from ...memory.compaction import get_compaction_service
 from ...memory.knowledge import extract_and_store_knowledge

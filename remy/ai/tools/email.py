@@ -173,9 +173,9 @@ async def exec_label_emails(registry: ToolRegistry, inp: dict) -> str:
     # Approval gate: bulk label/trash operations require confirmation (paperclip-ideas §4).
     from ..bot.handlers.callbacks import (
         BULK_EMAIL_APPROVAL_THRESHOLD,
-        make_bulk_email_keyboard,
         store_bulk_email_approval,
     )
+
     is_trash = "TRASH" in [lbl.upper() for lbl in add_labels]
     action_label = "trash" if is_trash else "label"
     if len(message_ids) > BULK_EMAIL_APPROVAL_THRESHOLD:
