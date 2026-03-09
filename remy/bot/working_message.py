@@ -1,19 +1,19 @@
 """
-Animated SimCity-style "working" placeholder for long-running operations.
+Unified "working" placeholder for long-running operations.
 
-Cycles through entertaining phrases via editMessageText while the bot is
-processing Board of Directors, research, or retrospective requests.
+Phase 3.11: Single abstraction for "show placeholder, optionally animate, edit or replace".
+Used by chat, pipeline, background tasks, and admin handlers.
 
-Usage::
+Usage (background — delete placeholder, send new message)::
 
-    wm = WorkingMessage(context.bot, update.effective_chat.id)
-    await wm.start()
-    try:
+    async with working_message(bot, chat_id, thread_id=thread_id) as wm:
         result = await long_operation(...)
-    finally:
-        await wm.stop()
+    await bot.send_message(chat_id, result)
 
-    await update.message.reply_text(result)
+Usage (edit-in-place — caller edits the message)::
+
+    async with working_message(bot, chat_id, animate=True) as wm:
+        await stream_into(wm.message)  # or wm.edit_to_result(text)
 """
 
 import asyncio
@@ -55,30 +55,74 @@ _EDIT_INTERVAL = 1.2  # seconds between edits — well under Telegram's rate lim
 
 
 class WorkingMessage:
-    """Animated SimCity-style placeholder that cycles phrases via editMessageText."""
+    """
+    Unified placeholder for long-running operations.
 
-    def __init__(self, bot, chat_id: int, thread_id: int | None = None) -> None:
+    Supports two modes:
+    - background: animate, then delete on stop() (caller sends new message)
+    - edit-in-place: animate until edit_to_result() or caller edits message directly
+    """
+
+    def __init__(
+        self,
+        bot,
+        chat_id: int,
+        thread_id: int | None = None,
+        *,
+        initial_text: str = "⚙️ …",
+        animate: bool = True,
+    ) -> None:
         self._bot = bot
         self._chat_id = chat_id
         self._thread_id = thread_id
+        self._initial_text = initial_text
+        self._do_animate = animate
+        self._message = None
         self._message_id: int | None = None
         self._task: asyncio.Task | None = None
+        self._replaced = False
+
+    @property
+    def message(self):
+        """The sent Telegram message object (for caller to edit directly)."""
+        return self._message
 
     async def start(self) -> None:
-        """Send the initial placeholder and start the animation loop."""
+        """Send the initial placeholder and optionally start the animation loop."""
         try:
+            kwargs: dict = {"message_thread_id": self._thread_id}
             msg = await self._bot.send_message(
                 self._chat_id,
-                "⚙️ …",
-                message_thread_id=self._thread_id,
+                self._initial_text,
+                **kwargs,
             )
+            self._message = msg
             self._message_id = msg.message_id
-            self._task = asyncio.create_task(self._animate())
+            if self._do_animate:
+                self._task = asyncio.create_task(self._animate_loop())
         except Exception as e:
             logger.debug("WorkingMessage failed to start: %s", e)
 
-    async def stop(self) -> None:
-        """Cancel the animation and delete the placeholder message."""
+    async def stop(self, *, delete: bool = True) -> None:
+        """Cancel animation and optionally delete the placeholder message."""
+        if self._task:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+            self._task = None
+
+        if delete and self._message_id and not self._replaced:
+            try:
+                await self._bot.delete_message(self._chat_id, self._message_id)
+            except Exception as e:
+                logger.debug("WorkingMessage failed to delete: %s", e)
+            self._message_id = None
+
+    async def edit_to_result(self, text: str, parse_mode: str = "Markdown") -> None:
+        """Stop animation and edit the message to the final result."""
+        self._replaced = True
         if self._task:
             self._task.cancel()
             try:
@@ -89,12 +133,20 @@ class WorkingMessage:
 
         if self._message_id:
             try:
-                await self._bot.delete_message(self._chat_id, self._message_id)
+                await self._bot.edit_message_text(
+                    text, self._chat_id, self._message_id, parse_mode=parse_mode
+                )
             except Exception as e:
-                logger.debug("WorkingMessage failed to delete: %s", e)
-            self._message_id = None
+                logger.debug("WorkingMessage edit_to_result failed: %s", e)
 
-    async def _animate(self) -> None:
+    async def __aenter__(self) -> "WorkingMessage":
+        await self.start()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        await self.stop(delete=not self._replaced)
+
+    async def _animate_loop(self) -> None:
         """Cycle through phrases with a typewriter effect."""
         shuffled = _PHRASES.copy()
         random.shuffle(shuffled)

@@ -7,6 +7,7 @@ Dispatches by prefix: confirm_archive_*, cancel_archive_*, add_to_calendar_*, et
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import secrets
 import time
@@ -93,7 +94,11 @@ _pending_bulk_email: dict[str, dict] = {}
 
 def _clean_stale_bulk_email() -> None:
     now = time.time()
-    stale = [t for t, v in _pending_bulk_email.items() if now - v["created_at"] > _PENDING_TTL_SECONDS]
+    stale = [
+        t
+        for t, v in _pending_bulk_email.items()
+        if now - v["created_at"] > _PENDING_TTL_SECONDS
+    ]
     for t in stale:
         del _pending_bulk_email[t]
 
@@ -124,8 +129,12 @@ def make_bulk_email_keyboard(token: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [
-                InlineKeyboardButton("✅ Confirm", callback_data=f"bulk_email_confirm_{token}"),
-                InlineKeyboardButton("❌ Cancel", callback_data=f"bulk_email_cancel_{token}"),
+                InlineKeyboardButton(
+                    "✅ Confirm", callback_data=f"bulk_email_confirm_{token}"
+                ),
+                InlineKeyboardButton(
+                    "❌ Cancel", callback_data=f"bulk_email_cancel_{token}"
+                ),
             ],
         ]
     )
@@ -175,6 +184,35 @@ def make_reminder_keyboard(token: str) -> InlineKeyboardMarkup:
             ],
         ]
     )
+
+
+def make_proactive_keyboard(config: dict) -> InlineKeyboardMarkup | None:
+    """
+    Unified keyboard factory for proactive messages (Phase 3.12).
+
+    config: one of
+      - {"type": "reminder", "user_id": int, "chat_id": int, "label": str,
+         "automation_id": int, "one_time": bool}
+      - {"type": "suggested_actions", "actions": list[dict], "user_id": int}
+    Returns InlineKeyboardMarkup or None.
+    """
+    if not config:
+        return None
+    ctype = config.get("type")
+    if ctype == "reminder":
+        token = store_reminder_payload(
+            user_id=config["user_id"],
+            chat_id=config["chat_id"],
+            label=config.get("label", ""),
+            automation_id=config.get("automation_id", 0),
+            one_time=config.get("one_time", False),
+        )
+        return make_reminder_keyboard(token)
+    if ctype == "suggested_actions":
+        actions = config.get("actions") or []
+        user_id = config.get("user_id", 0)
+        return make_suggested_actions_keyboard(actions, user_id)
+    return None
 
 
 def _clean_stale_suggested() -> None:
@@ -315,7 +353,7 @@ def make_callback_handler(
     session_manager=None,
     conv_store=None,
     db=None,
-    subagent_runner=None,
+    board_orchestrator=None,
     job_store=None,
     memory_injector=None,
     run_research_flow=None,
@@ -389,10 +427,12 @@ def make_callback_handler(
                 logger.debug("Edit message failed: %s", e)
 
         elif data.startswith("bulk_email_confirm_"):
-            token = data[len("bulk_email_confirm_"):]
+            token = data[len("bulk_email_confirm_") :]
             pending = _pending_bulk_email.pop(token, None)
             if pending is None or pending.get("user_id") != user_id:
-                await query.answer("Confirmation expired or not found.", show_alert=True)
+                await query.answer(
+                    "Confirmation expired or not found.", show_alert=True
+                )
             else:
                 try:
                     await query.edit_message_reply_markup(reply_markup=None)
@@ -406,6 +446,7 @@ def make_callback_handler(
                 remove_labels: list[str] = pending.get("remove_label_ids") or []
                 try:
                     from ...ai.tools.registry import ToolRegistry  # type: ignore[attr-defined]
+
                     if gmail := getattr(context.application, "_gmail_client", None):
                         if add_labels or remove_labels:
                             count = await gmail.modify_labels(
@@ -418,15 +459,19 @@ def make_callback_handler(
                                 f"✅ Bulk {action} complete: updated {count} email(s) (labels: {label_desc})."
                             )
                         else:
-                            await query.message.reply_text("⚠️ No labels specified — nothing done.")
+                            await query.message.reply_text(
+                                "⚠️ No labels specified — nothing done."
+                            )
                     else:
-                        await query.message.reply_text("⚠️ Gmail not available — action cancelled.")
+                        await query.message.reply_text(
+                            "⚠️ Gmail not available — action cancelled."
+                        )
                 except Exception as e:
                     logger.warning("Bulk email confirm execution failed: %s", e)
                     await query.message.reply_text(f"❌ Bulk {action} failed: {e}")
 
         elif data.startswith("bulk_email_cancel_"):
-            token = data[len("bulk_email_cancel_"):]
+            token = data[len("bulk_email_cancel_") :]
             _pending_bulk_email.pop(token, None)
             try:
                 await query.edit_message_text("❌ Bulk email action cancelled.")
@@ -699,7 +744,7 @@ def make_callback_handler(
                 await query.edit_message_reply_markup(reply_markup=None)
             except Exception as e:
                 logger.debug("Edit reply_markup for run_again failed: %s", e)
-            if flow == "board" and subagent_runner and context.bot:
+            if flow == "board" and board_orchestrator and context.bot:
                 topic = (params.get("topic") or "").strip()
                 if not topic:
                     await query.answer("No topic stored.", show_alert=True)
@@ -737,13 +782,21 @@ def make_callback_handler(
                     thread_id=thread_id,
                     chat_action=ChatAction.UPLOAD_DOCUMENT,
                 )
-                try:
-                    subagent_runner.start_board(
-                        background_runner,
-                        topic=topic,
-                        user_context=user_context,
+
+                async def _board_coro() -> str:
+                    chunks = [f"🏛 *Board of Directors: {topic}*\n\n"]
+                    async for chunk in board_orchestrator.run_board_streaming(
+                        topic,
+                        user_context,
                         user_id=user_id,
                         session_key=session_key,
+                    ):
+                        chunks.append(chunk)
+                    return "".join(chunks)
+
+                try:
+                    asyncio.create_task(
+                        background_runner.run(_board_coro(), label="board analysis")
                     )
                     await query.answer("Board running — I'll message you when done.")
                 except RuntimeError as e:

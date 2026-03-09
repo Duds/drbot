@@ -10,14 +10,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import random
 from typing import TYPE_CHECKING
 
 from telegram import Update
 
 from ...ai.input_validator import RateLimiter
 from ...config import settings
-from ...constants import WORKING_MESSAGES, TOOL_TURN_PREFIX
+from ...constants import TOOL_TURN_PREFIX
 from ...utils.tokens import estimate_tokens
 
 # Tools that trigger an automatic completion reaction (🤩) on the user's message
@@ -79,56 +78,6 @@ def _build_message_from_turn(turn: "ConversationTurn") -> dict:
 def _get_history_token_budget() -> int:
     """Calculate history token budget from settings (70% of max input tokens)."""
     return int(settings.max_input_tokens_per_request * 0.7)
-
-
-def _get_working_msg() -> str:
-    """Get a random working message for display while processing."""
-    return random.choice(WORKING_MESSAGES)
-
-
-class MessageRotator:
-    """
-    Background task that rotates working messages on a Telegram message
-    at random intervals until stopped.
-    """
-
-    def __init__(self, message, user_id: int):
-        self._message = message
-        self._user_id = user_id
-        self._task: asyncio.Task | None = None
-        self._stop_event = asyncio.Event()
-
-    async def _rotate_loop(self):
-        last_msg = ""
-        while not self._stop_event.is_set():
-            pool = [m for m in WORKING_MESSAGES if m != last_msg]
-            msg = random.choice(pool)
-            last_msg = msg
-
-            try:
-                await self._message.edit_text(msg)
-            except Exception as e:
-                logger.debug("Message edit failed (rate limit or deleted): %s", e)
-
-            wait_time = random.uniform(0.5, 2.5)
-            try:
-                await asyncio.wait_for(self._stop_event.wait(), timeout=wait_time)
-            except asyncio.TimeoutError:
-                continue
-
-    def start(self):
-        if self._task is None:
-            self._stop_event.clear()
-            self._task = asyncio.create_task(self._rotate_loop())
-
-    async def stop(self):
-        if self._task:
-            self._stop_event.set()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
-            self._task = None
 
 
 def _sanitize_messages_for_claude(msgs: list[dict]) -> list[dict]:

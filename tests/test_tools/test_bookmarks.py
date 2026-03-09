@@ -82,7 +82,8 @@ class TestExecSaveBookmark:
         )
 
     @pytest.mark.asyncio
-    async def test_save_with_fact_store(self):
+    async def test_save_without_knowledge_store_returns_memory_not_available(self):
+        """Phase 1.4: No fallback to fact_store; returns clear message when knowledge_store is None."""
         store = AsyncMock()
         store.add = AsyncMock(return_value=1)
         registry = make_registry(fact_store=store)
@@ -90,8 +91,8 @@ class TestExecSaveBookmark:
         result = await exec_save_bookmark(
             registry, {"url": "https://example.com", "note": ""}, USER_ID
         )
-        assert "🔖 Bookmark saved" in result
-        store.add.assert_called_once_with(USER_ID, "https://example.com", "bookmark")
+        assert "Memory not available" in result
+        store.add.assert_not_called()
 
 
 class TestExecListBookmarks:

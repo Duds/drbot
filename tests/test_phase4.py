@@ -108,8 +108,9 @@ def make_context(args=None):
 
 def test_search_no_args():
     from remy.bot.handlers import make_handlers
+    from tests.conftest import minimal_make_handlers_kwargs
 
-    handlers = make_handlers(session_manager=None, router=None, conv_store=None)
+    handlers = make_handlers(**minimal_make_handlers_kwargs())
     update = make_update()
     asyncio.run(handlers["search"](update, make_context()))
     assert "Usage:" in update.message.last_text
@@ -117,8 +118,9 @@ def test_search_no_args():
 
 def test_research_no_args():
     from remy.bot.handlers import make_handlers
+    from tests.conftest import minimal_make_handlers_kwargs
 
-    handlers = make_handlers(session_manager=None, router=None, conv_store=None)
+    handlers = make_handlers(**minimal_make_handlers_kwargs())
     update = make_update()
     asyncio.run(handlers["research"](update, make_context()))
     assert "Usage:" in update.message.last_text
@@ -126,6 +128,7 @@ def test_research_no_args():
 
 def test_search_with_results():
     from remy.bot.handlers import make_handlers
+    from tests.conftest import minimal_make_handlers_kwargs
 
     fake_results = [
         {
@@ -137,49 +140,23 @@ def test_search_with_results():
     with patch(
         "remy.web.search.asyncio.to_thread", new=AsyncMock(return_value=fake_results)
     ):
-        handlers = make_handlers(session_manager=None, router=None, conv_store=None)
+        handlers = make_handlers(**minimal_make_handlers_kwargs())
         update = make_update()
         asyncio.run(handlers["search"](update, make_context(["python", "programming"])))
     assert "Python" in update.message.last_text
 
 
-def test_save_url_no_fact_store():
-    from remy.bot.handlers import make_handlers
-
-    handlers = make_handlers(
-        session_manager=None, router=None, conv_store=None, fact_store=None
-    )
-    update = make_update()
-    asyncio.run(handlers["save-url"](update, make_context(["https://python.org"])))
-    assert "not available" in update.message.last_text.lower()
-
-
-def test_save_url_with_fact_store():
-    from remy.bot.handlers import make_handlers
-
-    mock_fs = MagicMock()
-    mock_fs.add = AsyncMock()
-    mock_fs.get_by_category = AsyncMock(return_value=[])
-    handlers = make_handlers(
-        session_manager=None, router=None, conv_store=None, fact_store=mock_fs
-    )
-    update = make_update()
-    asyncio.run(
-        handlers["save-url"](
-            update, make_context(["https://python.org", "Python", "docs"])
-        )
-    )
-    mock_fs.add.assert_called_once()
-    assert "Bookmark saved" in update.message.last_text
-
-
 def test_bookmarks_empty():
+    from remy.bot.handler_deps import MemoryDeps
     from remy.bot.handlers import make_handlers
+    from tests.conftest import minimal_make_handlers_kwargs
 
     mock_fs = MagicMock()
     mock_fs.get_by_category = AsyncMock(return_value=[])
     handlers = make_handlers(
-        session_manager=None, router=None, conv_store=None, fact_store=mock_fs
+        **minimal_make_handlers_kwargs(
+            memory_deps=MemoryDeps(conv_store=None, fact_store=mock_fs)
+        )
     )
     update = make_update()
     asyncio.run(handlers["bookmarks"](update, make_context()))
@@ -187,7 +164,9 @@ def test_bookmarks_empty():
 
 
 def test_bookmarks_list():
+    from remy.bot.handler_deps import MemoryDeps
     from remy.bot.handlers import make_handlers
+    from tests.conftest import minimal_make_handlers_kwargs
 
     mock_fs = MagicMock()
     mock_fs.get_by_category = AsyncMock(
@@ -197,7 +176,9 @@ def test_bookmarks_list():
         ]
     )
     handlers = make_handlers(
-        session_manager=None, router=None, conv_store=None, fact_store=mock_fs
+        **minimal_make_handlers_kwargs(
+            memory_deps=MemoryDeps(conv_store=None, fact_store=mock_fs)
+        )
     )
     update = make_update()
     asyncio.run(handlers["bookmarks"](update, make_context()))
@@ -206,17 +187,18 @@ def test_bookmarks_list():
 
 
 def test_grocery_list_show_empty():
+    from remy.bot.handler_deps import MemoryDeps
     from remy.bot.handlers import make_handlers
+    from tests.conftest import minimal_make_handlers_kwargs
 
     ks = AsyncMock()
     ks.get_by_type = AsyncMock(return_value=[])
     with patch("remy.bot.handlers.base.settings") as mock_base_settings:
         mock_base_settings.telegram_allowed_users = [12345]
         handlers = make_handlers(
-            session_manager=None,
-            router=None,
-            conv_store=None,
-            knowledge_store=ks,
+            **minimal_make_handlers_kwargs(
+                memory_deps=MemoryDeps(conv_store=None, knowledge_store=ks)
+            )
         )
         update = make_update()
         asyncio.run(handlers["grocery-list"](update, make_context()))
@@ -224,7 +206,9 @@ def test_grocery_list_show_empty():
 
 
 def test_grocery_list_add_and_show():
+    from remy.bot.handler_deps import MemoryDeps
     from remy.bot.handlers import make_handlers
+    from tests.conftest import minimal_make_handlers_kwargs
 
     ks = AsyncMock()
     ks.upsert = AsyncMock()
@@ -237,10 +221,9 @@ def test_grocery_list_add_and_show():
     with patch("remy.bot.handlers.base.settings") as mock_base_settings:
         mock_base_settings.telegram_allowed_users = [12345]
         handlers = make_handlers(
-            session_manager=None,
-            router=None,
-            conv_store=None,
-            knowledge_store=ks,
+            **minimal_make_handlers_kwargs(
+                memory_deps=MemoryDeps(conv_store=None, knowledge_store=ks)
+            )
         )
         update = make_update()
         asyncio.run(
@@ -252,7 +235,9 @@ def test_grocery_list_add_and_show():
 
 
 def test_grocery_list_done():
+    from remy.bot.handler_deps import MemoryDeps
     from remy.bot.handlers import make_handlers
+    from tests.conftest import minimal_make_handlers_kwargs
 
     ks = AsyncMock()
     ks.get_by_type = AsyncMock(
@@ -266,10 +251,9 @@ def test_grocery_list_done():
     with patch("remy.bot.handlers.base.settings") as mock_base_settings:
         mock_base_settings.telegram_allowed_users = [12345]
         handlers = make_handlers(
-            session_manager=None,
-            router=None,
-            conv_store=None,
-            knowledge_store=ks,
+            **minimal_make_handlers_kwargs(
+                memory_deps=MemoryDeps(conv_store=None, knowledge_store=ks)
+            )
         )
         update = make_update()
         asyncio.run(handlers["grocery-list"](update, make_context(["done", "eggs"])))
@@ -279,17 +263,18 @@ def test_grocery_list_done():
 
 def test_grocery_list_done_by_id():
     """Unified list shows IDs; /grocery-list done <id> removes by ID without get_by_type."""
+    from remy.bot.handler_deps import MemoryDeps
     from remy.bot.handlers import make_handlers
+    from tests.conftest import minimal_make_handlers_kwargs
 
     ks = AsyncMock()
     ks.delete = AsyncMock(return_value=True)
     with patch("remy.bot.handlers.base.settings") as mock_base_settings:
         mock_base_settings.telegram_allowed_users = [12345]
         handlers = make_handlers(
-            session_manager=None,
-            router=None,
-            conv_store=None,
-            knowledge_store=ks,
+            **minimal_make_handlers_kwargs(
+                memory_deps=MemoryDeps(conv_store=None, knowledge_store=ks)
+            )
         )
         update = make_update()
         asyncio.run(handlers["grocery-list"](update, make_context(["done", "42"])))
@@ -298,7 +283,9 @@ def test_grocery_list_done_by_id():
 
 
 def test_grocery_list_clear():
+    from remy.bot.handler_deps import MemoryDeps
     from remy.bot.handlers import make_handlers
+    from tests.conftest import minimal_make_handlers_kwargs
 
     ks = AsyncMock()
     ks.get_by_type = AsyncMock(
@@ -311,10 +298,9 @@ def test_grocery_list_clear():
     with patch("remy.bot.handlers.base.settings") as mock_base_settings:
         mock_base_settings.telegram_allowed_users = [12345]
         handlers = make_handlers(
-            session_manager=None,
-            router=None,
-            conv_store=None,
-            knowledge_store=ks,
+            **minimal_make_handlers_kwargs(
+                memory_deps=MemoryDeps(conv_store=None, knowledge_store=ks)
+            )
         )
         update = make_update()
         asyncio.run(handlers["grocery-list"](update, make_context(["clear"])))
@@ -324,8 +310,9 @@ def test_grocery_list_clear():
 
 def test_price_check_no_args():
     from remy.bot.handlers import make_handlers
+    from tests.conftest import minimal_make_handlers_kwargs
 
-    handlers = make_handlers(session_manager=None, router=None, conv_store=None)
+    handlers = make_handlers(**minimal_make_handlers_kwargs())
     update = make_update()
     asyncio.run(handlers["price-check"](update, make_context()))
     assert "Usage:" in update.message.last_text

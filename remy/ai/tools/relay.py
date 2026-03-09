@@ -7,7 +7,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from ...config import settings
-from ...relay.client import (
+from ...relay import (
     create_task,
     get_messages_for_remy,
     get_tasks_for_remy,

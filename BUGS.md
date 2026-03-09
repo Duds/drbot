@@ -184,3 +184,20 @@ Archived bugs 1–41 (all fixed) → [docs/archive/BUGS-archived-2026-03-04.md](
 - **Related:** Bug 10 (MarkdownV2 entity error → retry loop → Telegram disconnect — similar disconnect symptom via different trigger)
 - **Reported:** 2026-03-06 (Dale Rogers — 11-minute reply delay observed in conversation)
 - **Fixed:** 2026-03-06
+
+---
+
+## Bug 12: Evening check-in does not call `get_counter` — sobriety streak not reflected
+
+- **Symptom:** The 5pm check-in does not reference the sobriety streak counter. The counter value is injected into memory context at snapshot time but the check-in prompt does not explicitly call `get_counter("sobriety_streak")` at fire time, so the live counter value may be stale or ignored entirely.
+- **Root cause:** The mediated check-in prompt does not instruct the agent to call `get_counter` at fire time. The counter value in the injected context block (`<counters>`) is a snapshot from when the heartbeat was built, not the live value. The prompt does not reference the counter block or direct the agent to use it.
+- **Impact:** Medium. Sobriety milestone support and acknowledgement is a meaningful part of the evening check-in. Missing or stale streak data means the check-in feels generic and misses an opportunity to reinforce progress.
+- **Priority:** Medium
+- **Status:** Open
+- **Location:** Evening check-in prompt / `remy/scheduler/proactive.py` (mediated check-in prompt template); counter injection in `remy/memory/memory_injector.py`
+- **Suggested fix:**
+  1. Add an explicit `get_counter("sobriety_streak")` call at the start of the mediated evening check-in so the live value is always used.
+  2. Alternatively, ensure the heartbeat counter snapshot is refreshed immediately before the check-in fires (not at bot start or last heartbeat).
+  3. Update the check-in prompt to reference the `<counters>` block and instruct the agent to acknowledge milestones (e.g. "Day 7", "Day 30") when relevant.
+  4. Add a test: fire a mock check-in with a known counter value and assert the counter tool is called and the value appears in the output.
+- **Reported:** 2026-03-06 (Dale Rogers)

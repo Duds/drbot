@@ -122,6 +122,55 @@ class TestTelegramBot:
             assert mock_builder.connect_timeout.called
             assert mock_builder.read_timeout.called
 
+    def test_phase3_commands_registered(self, mock_settings, sample_handlers):
+        """Phase 3: Assert exactly 13 collapsed commands are registered."""
+        PHASE3_COMMANDS = {
+            "start",
+            "help",
+            "cancel",
+            "status",
+            "compact",
+            "setmychat",
+            "briefing",
+            "delete_conversation",
+            "board",
+            "logs",
+            "stats",
+            "costs",
+            "diagnostics",
+        }
+        with patch("remy.bot.telegram_bot.Application") as mock_app:
+            mock_builder = MagicMock()
+            mock_application = MagicMock()
+            mock_app.builder.return_value = mock_builder
+            mock_builder.token.return_value = mock_builder
+            mock_builder.http_version.return_value = mock_builder
+            mock_builder.connect_timeout.return_value = mock_builder
+            mock_builder.read_timeout.return_value = mock_builder
+            mock_builder.write_timeout.return_value = mock_builder
+            mock_builder.pool_timeout.return_value = mock_builder
+            mock_builder.get_updates_connect_timeout.return_value = mock_builder
+            mock_builder.get_updates_read_timeout.return_value = mock_builder
+            mock_builder.get_updates_write_timeout.return_value = mock_builder
+            mock_builder.get_updates_pool_timeout.return_value = mock_builder
+            mock_builder.build.return_value = mock_application
+
+            from remy.bot.telegram_bot import TelegramBot
+            from telegram.ext import CommandHandler
+
+            TelegramBot(handlers=sample_handlers)
+
+            command_handler_calls = [
+                c
+                for c in mock_application.add_handler.call_args_list
+                if c[0] and isinstance(c[0][0], CommandHandler)
+            ]
+            registered_commands = {
+                next(iter(c[0][0].commands)) for c in command_handler_calls
+            }
+            assert registered_commands == PHASE3_COMMANDS
+            assert len(command_handler_calls) == 13
+
     def test_handlers_registered(self, mock_settings, sample_handlers):
         """Verify all handlers are registered with the application."""
         with patch("remy.bot.telegram_bot.Application") as mock_app:

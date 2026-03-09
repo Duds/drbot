@@ -28,9 +28,7 @@ async def test_start_sends_initial_placeholder():
     await wm.start()
     await wm.stop()
 
-    bot.send_message.assert_called_once_with(
-        999, "⚙️ …", message_thread_id=None
-    )
+    bot.send_message.assert_called_once_with(999, "⚙️ …", message_thread_id=None)
 
 
 @pytest.mark.asyncio
@@ -42,9 +40,7 @@ async def test_start_with_thread_id():
     await wm.start()
     await wm.stop()
 
-    bot.send_message.assert_called_once_with(
-        999, "⚙️ …", message_thread_id=42
-    )
+    bot.send_message.assert_called_once_with(999, "⚙️ …", message_thread_id=42)
 
 
 @pytest.mark.asyncio
@@ -174,3 +170,28 @@ async def test_phrases_list_is_not_empty():
 async def test_phrases_are_unique():
     """All phrases should be unique."""
     assert len(_PHRASES) == len(set(_PHRASES))
+
+
+@pytest.mark.asyncio
+async def test_async_context_manager():
+    """Phase 3.11: async with WorkingMessage sets wm.message, calls start(), stop(delete=...) on exit."""
+    bot = make_mock_bot()
+    async with WorkingMessage(bot, chat_id=999) as wm:
+        assert wm.message is not None
+        assert wm.message.message_id == 12345
+    bot.send_message.assert_called_once()
+    bot.delete_message.assert_called_once_with(999, 12345)
+
+
+@pytest.mark.asyncio
+async def test_edit_to_result():
+    """Phase 3.11: edit_to_result edits message to text and stop(delete=False) does not delete."""
+    bot = make_mock_bot()
+    wm = WorkingMessage(bot, chat_id=999)
+    await wm.start()
+    await wm.edit_to_result("Done")
+    bot.edit_message_text.assert_called()
+    last_call = bot.edit_message_text.call_args_list[-1]
+    assert last_call[0][0] == "Done"
+    await wm.stop(delete=False)
+    bot.delete_message.assert_not_called()

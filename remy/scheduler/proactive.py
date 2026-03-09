@@ -44,6 +44,7 @@ from .briefings import (
 if TYPE_CHECKING:
     from telegram import Bot
 
+    from ..memory.knowledge import KnowledgeStore
     from ..bot.heartbeat_handler import HeartbeatHandler
     from ..delivery.queue import OutboundQueue
     from ..google.gmail import GmailClient
@@ -168,6 +169,7 @@ class ProactiveScheduler:
         outbound_queue: "OutboundQueue | None" = None,
         heartbeat_handler: "HeartbeatHandler | None" = None,
         counter_store: "CounterStore | None" = None,
+        knowledge_store: "KnowledgeStore | None" = None,
     ) -> None:
         self._bot = bot
         self._outbound_queue = outbound_queue
@@ -175,6 +177,7 @@ class ProactiveScheduler:
         self._counter_store = counter_store
         self._goal_store = goal_store
         self._fact_store = fact_store
+        self._knowledge_store = knowledge_store
         self._calendar = calendar_client
         self._contacts = contacts_client
         self._gmail = gmail_client
@@ -750,16 +753,22 @@ class ProactiveScheduler:
 
         This gives Remy a persistent history of completed tasks/reminders,
         preventing stale reminders and enabling "what reminders have I had?" queries.
+        Phase 1.4: prefer KnowledgeStore; fall back to FactStore only when knowledge_store is None.
         """
-        if self._fact_store is None:
-            logger.debug("Cannot log completed reminder — fact_store not configured")
+        if self._knowledge_store is None and self._fact_store is None:
+            logger.debug("Cannot log completed reminder — no store configured")
             return
 
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         fact_content = f"Reminder completed: {label} ({today})"
 
         try:
-            await self._fact_store.add(user_id, fact_content, category="other")
+            if self._knowledge_store is not None:
+                await self._knowledge_store.add_item(
+                    user_id, "fact", fact_content, {"category": "other"}
+                )
+            else:
+                await self._fact_store.add(user_id, fact_content, category="other")
             logger.info(
                 "Logged completed one-time reminder as fact for user %d: %s",
                 user_id,
@@ -854,7 +863,7 @@ class ProactiveScheduler:
             return
 
         try:
-            from ..relay.client import get_messages_for_remy, get_tasks_for_remy
+            from ..relay import get_messages_for_remy, get_tasks_for_remy
         except ImportError:
             return
 
@@ -1333,35 +1342,49 @@ class ProactiveScheduler:
         facts_stored = 0
         goals_stored = 0
 
-        # Store extracted facts
+        # Store extracted facts (Phase 1.4: prefer KnowledgeStore)
         facts = data.get("facts", [])
-        if facts and self._fact_store is not None:
+        store_facts = self._knowledge_store is not None or self._fact_store is not None
+        if facts and store_facts:
             for fact in facts[:10]:  # Cap at 10 facts per day
                 content = fact.get("content", "").strip()
                 category = fact.get("category", "other").strip().lower()
                 if not content:
                     continue
                 try:
-                    # Add date context to the fact
                     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
                     if today not in content:
                         content = f"{content} ({today})"
-                    await self._fact_store.add(user_id, content, category)
+                    if self._knowledge_store is not None:
+                        await self._knowledge_store.add_item(
+                            user_id, "fact", content, {"category": category}
+                        )
+                    else:
+                        await self._fact_store.add(user_id, content, category)
                     facts_stored += 1
                     logger.debug("Consolidated fact: [%s] %s", category, content[:50])
                 except Exception as e:
                     logger.warning("Could not store consolidated fact: %s", e)
 
-        # Store extracted goals
+        # Store extracted goals (Phase 1.4: prefer KnowledgeStore)
         goals = data.get("goals", [])
-        if goals and self._goal_store is not None:
+        store_goals = self._knowledge_store is not None or self._goal_store is not None
+        if goals and store_goals:
             for goal in goals[:5]:  # Cap at 5 goals per day
                 title = goal.get("title", "").strip()
                 description = goal.get("description", "").strip() or None
                 if not title:
                     continue
                 try:
-                    await self._goal_store.add(user_id, title, description)
+                    if self._knowledge_store is not None:
+                        metadata = {"status": "active"}
+                        if description:
+                            metadata["description"] = description
+                        await self._knowledge_store.add_item(
+                            user_id, "goal", title, metadata
+                        )
+                    else:
+                        await self._goal_store.add(user_id, title, description)
                     goals_stored += 1
                     logger.debug("Consolidated goal: %s", title[:50])
                 except Exception as e:

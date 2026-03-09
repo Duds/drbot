@@ -10,12 +10,10 @@ from .finance import FinanceAgent
 from .orchestrator import BoardOrchestrator
 from .researcher import ResearcherAgent
 from .strategy import StrategyAgent
-from .subagent_runner import SubagentRunner
 
 __all__ = [
     "BackgroundTaskRunner",
     "SubAgent",
-    "SubagentRunner",
     "StrategyAgent",
     "ContentAgent",
     "FinanceAgent",

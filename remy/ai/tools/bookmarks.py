@@ -27,18 +27,14 @@ async def exec_save_bookmark(registry: ToolRegistry, inp: dict, user_id: int) ->
     if not _is_valid_url(url):
         return "Please provide a valid URL (must start with http:// or https://)."
 
-    if registry._fact_store is None and registry._knowledge_store is None:
-        return "Memory not available."
-
     content = f"{url} — {note}" if note else url
 
-    if registry._knowledge_store is not None:
-        await registry._knowledge_store.add_item(
-            user_id, "fact", content, {"category": "bookmark"}
-        )
-    elif registry._fact_store is not None:
-        await registry._fact_store.add(user_id, content, "bookmark")
+    if registry._knowledge_store is None:
+        return "Memory not available."
 
+    await registry._knowledge_store.add_item(
+        user_id, "fact", content, {"category": "bookmark"}
+    )
     return f"🔖 Bookmark saved: {content}"
 
 

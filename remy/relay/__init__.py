@@ -9,6 +9,7 @@ Used when Remy needs to post messages or notes to cowork from Python code
 from __future__ import annotations
 
 from .client import (
+    create_task,
     get_messages_for_remy,
     get_tasks_for_remy,
     post_message_to_cowork,
@@ -17,6 +18,7 @@ from .client import (
 )
 
 __all__ = [
+    "create_task",
     "get_messages_for_remy",
     "get_tasks_for_remy",
     "post_message_to_cowork",

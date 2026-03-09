@@ -251,7 +251,7 @@ class MorningBriefingGenerator(BriefingGenerator):
 
         # Relay inbox (US-claude-desktop-relay, US-relay-shared-backend)
         try:
-            from ...relay.client import get_messages_for_remy, get_tasks_for_remy
+            from ...relay import get_messages_for_remy, get_tasks_for_remy
 
             _, unread = await get_messages_for_remy(
                 agent="remy",
@@ -406,7 +406,7 @@ class MorningBriefingGenerator(BriefingGenerator):
         """One-liner if there are unread relay messages or pending tasks from cowork (US-relay-shared-backend)."""
         try:
             from ...config import settings
-            from ...relay.client import get_messages_for_remy, get_tasks_for_remy
+            from ...relay import get_messages_for_remy, get_tasks_for_remy
 
             messages, unread = await get_messages_for_remy(
                 agent="remy",

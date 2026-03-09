@@ -16,11 +16,11 @@ def mock_settings(tmp_path, monkeypatch):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     monkeypatch.setenv("AZURE_ENVIRONMENT", "false")
     monkeypatch.setenv("LOG_LEVEL", "DEBUG")
-    
+
     # Create required directories
     (tmp_path / "sessions").mkdir()
     (tmp_path / "logs").mkdir()
-    
+
     return tmp_path
 
 
@@ -60,44 +60,51 @@ def mock_database():
 class TestMainStartup:
     """Tests for main.py startup sequence."""
 
-    def test_data_directories_created(self, mock_settings, mock_telegram_bot, mock_claude_client, mock_database):
+    def test_data_directories_created(
+        self, mock_settings, mock_telegram_bot, mock_claude_client, mock_database
+    ):
         """Verify data directories are created on startup."""
         from remy.config import get_settings
-        
+
         # Clear cached settings
         import remy.config
+
         remy.config._settings = None
-        
+
         settings = get_settings()
-        
+
         assert os.path.exists(settings.data_dir)
         assert os.path.exists(settings.sessions_dir)
         assert os.path.exists(settings.logs_dir)
 
-    def test_logging_configured(self, mock_settings, mock_telegram_bot, mock_claude_client, mock_database):
+    def test_logging_configured(
+        self, mock_settings, mock_telegram_bot, mock_claude_client, mock_database
+    ):
         """Verify logging is configured on startup."""
         import logging
         from remy.logging_config import setup_logging
         from remy.config import get_settings
-        
+
         import remy.config
+
         remy.config._settings = None
-        
+
         settings = get_settings()
         setup_logging(settings.log_level, settings.logs_dir, settings.azure_environment)
-        
+
         logger = logging.getLogger("remy")
         assert logger.level == logging.DEBUG or logger.level == logging.NOTSET
 
-    def test_components_initialised(self, mock_settings, mock_telegram_bot, mock_claude_client, mock_database):
+    def test_components_initialised(
+        self, mock_settings, mock_telegram_bot, mock_claude_client, mock_database
+    ):
         """Verify all major components are initialised."""
         from contextlib import ExitStack
-        
+
         patches_to_apply = [
             "remy.main.MistralClient",
             "remy.main.MoonshotClient",
             "remy.main.OllamaClient",
-            "remy.main.ModelRouter",
             "remy.main.SessionManager",
             "remy.main.ConversationStore",
             "remy.main.EmbeddingStore",
@@ -122,22 +129,22 @@ class TestMainStartup:
             "remy.main.log_startup_config",
             "remy.ai.tone.ToneDetector",
         ]
-        
+
         with ExitStack() as stack:
             for target in patches_to_apply:
                 stack.enter_context(patch(target))
-            
+
             mock_job_store = stack.enter_context(patch("remy.main.BackgroundJobStore"))
             mock_handlers = stack.enter_context(patch("remy.main.make_handlers"))
-            
+
             mock_handlers.return_value = {"briefing": MagicMock()}
             mock_job_store.return_value.mark_interrupted = AsyncMock()
-            
+
             # Import main to trigger component initialisation
             import remy.config
+
             remy.config._settings = None
-            
-            
+
             # Verify TelegramBot was instantiated
             mock_telegram_bot.assert_not_called()  # Not called until main() runs
 
@@ -149,20 +156,20 @@ class TestHealthMonitor:
     async def test_health_monitor_logs_failures(self, mock_settings):
         """Verify health monitor logs consecutive failures."""
         from remy.main import health_monitor
-        
+
         mock_claude = MagicMock()
         mock_claude.ping = AsyncMock(side_effect=[False, False, True])
-        
+
         mock_bot = MagicMock()
         mock_bot.send_message = AsyncMock()
-        
+
         # Run health monitor with short sleep
         with patch("remy.main.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
             mock_sleep.side_effect = [None, None, asyncio.CancelledError()]
-            
+
             with pytest.raises(asyncio.CancelledError):
                 await health_monitor(mock_claude, mock_bot)
-        
+
         # Should have attempted to send alert after 2 consecutive failures
         assert mock_claude.ping.call_count >= 2
 
@@ -170,11 +177,13 @@ class TestHealthMonitor:
 class TestSignalHandling:
     """Tests for signal handling in main."""
 
-    def test_sigterm_handler_registered(self, mock_settings, mock_telegram_bot, mock_claude_client, mock_database):
+    def test_sigterm_handler_registered(
+        self, mock_settings, mock_telegram_bot, mock_claude_client, mock_database
+    ):
         """Verify SIGTERM handler is registered."""
         import signal
-        
+
         signal.getsignal(signal.SIGTERM)
-        
+
         # The handler is registered inside main(), so we just verify the mechanism works
         assert signal.getsignal(signal.SIGTERM) is not None

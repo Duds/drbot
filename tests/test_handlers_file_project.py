@@ -1,7 +1,9 @@
 import asyncio
 
 
+from remy.bot.handler_deps import MemoryDeps
 from remy.bot.handlers import make_handlers
+from tests.conftest import minimal_make_handlers_kwargs
 from remy.bot.session import SessionManager
 from remy.memory.conversations import ConversationStore
 from remy.memory.database import DatabaseManager
@@ -39,6 +41,7 @@ def make_context(args):
     class Context:
         def __init__(self, args):
             self.args = args
+
     return Context(args)
 
 
@@ -55,21 +58,26 @@ def test_set_and_status_project(tmp_path, monkeypatch):
                 return 1
 
         fact_store = FactStore(db, DummyEmbeds())
-        
+
         # Mock settings to allow tmp_path - need to patch at the module where it's used
         from unittest.mock import MagicMock, patch
+
         mock_settings = MagicMock()
         mock_settings.allowed_base_dirs = [str(tmp_path)]
         mock_settings.telegram_allowed_users = [12345]
         mock_settings.data_dir = str(tmp_path)
-        
-        with patch("remy.bot.handlers.files.settings", mock_settings), \
-             patch("remy.bot.handlers.base.settings", mock_settings):
+
+        with (
+            patch("remy.bot.handlers.files.settings", mock_settings),
+            patch("remy.bot.handlers.base.settings", mock_settings),
+        ):
             handlers = make_handlers(
-                session_manager=None,
-                router=None,
-                conv_store=None,
-                fact_store=fact_store,
+                **minimal_make_handlers_kwargs(
+                    memory_deps=MemoryDeps(
+                        conv_store=None,
+                        fact_store=fact_store,
+                    )
+                )
             )
             await db.upsert_user(12345)
 
@@ -92,24 +100,27 @@ def test_set_and_status_project(tmp_path, monkeypatch):
 
 def test_read_write_ls(tmp_path):
     from unittest.mock import MagicMock, patch
-    
+
     session_manager = SessionManager()
     conv_store = ConversationStore(str(tmp_path / "sessions"))
-    
+
     # Mock settings to allow tmp_path - need to patch at the module where it's used
     mock_settings = MagicMock()
     mock_settings.allowed_base_dirs = [str(tmp_path)]
     mock_settings.telegram_allowed_users = [12345]
     mock_settings.data_dir = str(tmp_path)
     mock_settings.max_concurrent_per_user = 3
-    
-    with patch("remy.bot.handlers.files.settings", mock_settings), \
-         patch("remy.bot.handlers.base.settings", mock_settings), \
-         patch("remy.bot.handlers.chat.settings", mock_settings):
+
+    with (
+        patch("remy.bot.handlers.files.settings", mock_settings),
+        patch("remy.bot.handlers.base.settings", mock_settings),
+        patch("remy.bot.handlers.chat.settings", mock_settings),
+    ):
         handlers = make_handlers(
-            session_manager=session_manager,
-            router=None,
-            conv_store=conv_store,
+            **minimal_make_handlers_kwargs(
+                session_manager=session_manager,
+                memory_deps=MemoryDeps(conv_store=conv_store),
+            )
         )
         read_cmd = handlers["read"]
         write_cmd = handlers["write"]

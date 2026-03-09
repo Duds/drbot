@@ -225,13 +225,12 @@ def make_context(args=None):
 
 def test_calendar_not_configured():
     """When google_calendar is None, command returns helpful error."""
+    from remy.bot.handler_deps import GoogleDeps
     from remy.bot.handlers import make_handlers
+    from tests.conftest import minimal_make_handlers_kwargs
 
     handlers = make_handlers(
-        session_manager=None,
-        router=None,
-        conv_store=None,
-        google_calendar=None,
+        **minimal_make_handlers_kwargs(google_deps=GoogleDeps(calendar=None))
     )
     update = make_update()
     asyncio.run(handlers["calendar"](update, make_context()))
@@ -239,13 +238,12 @@ def test_calendar_not_configured():
 
 
 def test_gmail_not_configured():
+    from remy.bot.handler_deps import GoogleDeps
     from remy.bot.handlers import make_handlers
+    from tests.conftest import minimal_make_handlers_kwargs
 
     handlers = make_handlers(
-        session_manager=None,
-        router=None,
-        conv_store=None,
-        google_gmail=None,
+        **minimal_make_handlers_kwargs(google_deps=GoogleDeps(gmail=None))
     )
     update = make_update()
     asyncio.run(handlers["gmail-unread"](update, make_context()))
@@ -253,13 +251,12 @@ def test_gmail_not_configured():
 
 
 def test_gdoc_not_configured():
+    from remy.bot.handler_deps import GoogleDeps
     from remy.bot.handlers import make_handlers
+    from tests.conftest import minimal_make_handlers_kwargs
 
     handlers = make_handlers(
-        session_manager=None,
-        router=None,
-        conv_store=None,
-        google_docs=None,
+        **minimal_make_handlers_kwargs(google_deps=GoogleDeps(docs=None))
     )
     update = make_update()
     asyncio.run(handlers["gdoc"](update, make_context()))
@@ -267,14 +264,13 @@ def test_gdoc_not_configured():
 
 
 def test_schedule_missing_args():
+    from remy.bot.handler_deps import GoogleDeps
     from remy.bot.handlers import make_handlers
+    from tests.conftest import minimal_make_handlers_kwargs
 
     mock_cal = MagicMock()
     handlers = make_handlers(
-        session_manager=None,
-        router=None,
-        conv_store=None,
-        google_calendar=mock_cal,
+        **minimal_make_handlers_kwargs(google_deps=GoogleDeps(calendar=mock_cal))
     )
     update = make_update()
     # Too few args
@@ -284,7 +280,9 @@ def test_schedule_missing_args():
 
 def test_calendar_command_with_mock():
     """calendar command calls google_calendar.list_events and formats results."""
+    from remy.bot.handler_deps import GoogleDeps
     from remy.bot.handlers import make_handlers
+    from tests.conftest import minimal_make_handlers_kwargs
 
     mock_cal = MagicMock()
     mock_cal.list_events = AsyncMock(
@@ -298,10 +296,7 @@ def test_calendar_command_with_mock():
     mock_cal.format_event = MagicMock(return_value="• 09:00 — Stand-up")
 
     handlers = make_handlers(
-        session_manager=None,
-        router=None,
-        conv_store=None,
-        google_calendar=mock_cal,
+        **minimal_make_handlers_kwargs(google_deps=GoogleDeps(calendar=mock_cal))
     )
     update = make_update()
     asyncio.run(handlers["calendar"](update, make_context()))
@@ -309,7 +304,9 @@ def test_calendar_command_with_mock():
 
 
 def test_gmail_unread_summary_mock():
+    from remy.bot.handler_deps import GoogleDeps
     from remy.bot.handlers import make_handlers
+    from tests.conftest import minimal_make_handlers_kwargs
 
     mock_gmail = MagicMock()
     mock_gmail.get_unread_summary = AsyncMock(
@@ -320,10 +317,7 @@ def test_gmail_unread_summary_mock():
     )
 
     handlers = make_handlers(
-        session_manager=None,
-        router=None,
-        conv_store=None,
-        google_gmail=mock_gmail,
+        **minimal_make_handlers_kwargs(google_deps=GoogleDeps(gmail=mock_gmail))
     )
     update = make_update()
     asyncio.run(handlers["gmail-unread-summary"](update, make_context()))
@@ -451,10 +445,12 @@ def test_get_upcoming_birthdays_outside_window():
 
 
 def test_contacts_not_configured():
+    from remy.bot.handler_deps import GoogleDeps
     from remy.bot.handlers import make_handlers
+    from tests.conftest import minimal_make_handlers_kwargs
 
     handlers = make_handlers(
-        session_manager=None, router=None, conv_store=None, google_contacts=None
+        **minimal_make_handlers_kwargs(google_deps=GoogleDeps(contacts=None))
     )
     update = make_update()
     asyncio.run(handlers["contacts"](update, make_context()))
@@ -462,17 +458,16 @@ def test_contacts_not_configured():
 
 
 def test_contacts_search_with_results():
+    from remy.bot.handler_deps import GoogleDeps
     from remy.bot.handlers import make_handlers
+    from tests.conftest import minimal_make_handlers_kwargs
 
     mock_contacts = MagicMock()
     mock_contacts.search_contacts = AsyncMock(
         return_value=[_make_person("Jane Doe", email="jane@example.com")]
     )
     handlers = make_handlers(
-        session_manager=None,
-        router=None,
-        conv_store=None,
-        google_contacts=mock_contacts,
+        **minimal_make_handlers_kwargs(google_deps=GoogleDeps(contacts=mock_contacts))
     )
     update = make_update()
     asyncio.run(handlers["contacts"](update, make_context(["Jane"])))
@@ -480,15 +475,14 @@ def test_contacts_search_with_results():
 
 
 def test_contacts_birthday_no_upcoming():
+    from remy.bot.handler_deps import GoogleDeps
     from remy.bot.handlers import make_handlers
+    from tests.conftest import minimal_make_handlers_kwargs
 
     mock_contacts = MagicMock()
     mock_contacts.get_upcoming_birthdays = AsyncMock(return_value=[])
     handlers = make_handlers(
-        session_manager=None,
-        router=None,
-        conv_store=None,
-        google_contacts=mock_contacts,
+        **minimal_make_handlers_kwargs(google_deps=GoogleDeps(contacts=mock_contacts))
     )
     update = make_update()
     asyncio.run(handlers["contacts-birthday"](update, make_context()))
@@ -496,15 +490,14 @@ def test_contacts_birthday_no_upcoming():
 
 
 def test_contacts_prune_none_sparse():
+    from remy.bot.handler_deps import GoogleDeps
     from remy.bot.handlers import make_handlers
+    from tests.conftest import minimal_make_handlers_kwargs
 
     mock_contacts = MagicMock()
     mock_contacts.get_sparse_contacts = AsyncMock(return_value=[])
     handlers = make_handlers(
-        session_manager=None,
-        router=None,
-        conv_store=None,
-        google_contacts=mock_contacts,
+        **minimal_make_handlers_kwargs(google_deps=GoogleDeps(contacts=mock_contacts))
     )
     update = make_update()
     asyncio.run(handlers["contacts-prune"](update, make_context()))
@@ -512,14 +505,13 @@ def test_contacts_prune_none_sparse():
 
 
 def test_contacts_note_no_args():
+    from remy.bot.handler_deps import GoogleDeps
     from remy.bot.handlers import make_handlers
+    from tests.conftest import minimal_make_handlers_kwargs
 
     mock_contacts = MagicMock()
     handlers = make_handlers(
-        session_manager=None,
-        router=None,
-        conv_store=None,
-        google_contacts=mock_contacts,
+        **minimal_make_handlers_kwargs(google_deps=GoogleDeps(contacts=mock_contacts))
     )
     update = make_update()
     asyncio.run(handlers["contacts-note"](update, make_context()))

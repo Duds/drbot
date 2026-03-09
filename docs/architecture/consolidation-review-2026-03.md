@@ -34,7 +34,7 @@ There are five separate classes that all mean "run something and deliver a resul
 | `TaskOrchestrator` | `agents/task_orchestrator.py` | Delegates to `TaskRunner` workers; synthesises results |
 | `TaskRunner` | `agents/runner.py` | Manages asyncio worker pool with DB persistence |
 
-`SubagentRunner` is a thin wrapper around `BoardOrchestrator` that exists only to call `BackgroundTaskRunner.run()`. It adds no logic and should not exist as a separate class. `TaskOrchestrator` and `TaskRunner` are a separate orchestration system (SAD v10 §11) that partially overlaps with `BoardOrchestrator` — the `TaskRunner` even has a `board` worker type that internally calls `BoardOrchestrator`, creating a double-wrapping. At present, `TaskOrchestrator`/`TaskRunner` are constructed but never wired into the live system via `main.py`.
+`SubagentRunner` is a thin wrapper around `BoardOrchestrator` that exists only to call `BackgroundTaskRunner.run()`. It adds no logic and should not exist as a separate class. `TaskOrchestrator` and `TaskRunner` are a separate orchestration system (SAD v10 §11) that partially overlaps with `BoardOrchestrator` — the `TaskRunner` even has a `board` worker type that internally calls `BoardOrchestrator`, creating a double-wrapping. `TaskOrchestrator` and `TaskRunner` exist in the codebase but are never instantiated in `main.py`; `ToolRegistry.task_runner` is always `None`. The `run_board` tool falls back to inline `BoardOrchestrator` execution.
 
 #### (b) Dual memory stores that are both active
 
@@ -54,7 +54,7 @@ Additionally, `task_orchestrator.py` creates its own `anthropic.AsyncAnthropic` 
 
 #### (d) Explosion of dependencies at the wiring layer
 
-`make_handlers()` accepts 22 parameters. `ProactiveScheduler.__init__()` takes 18 dependencies. `ToolRegistry.__init__()` takes 18 keyword arguments. `main.py` instantiates 16 memory-related objects before startup is complete. This wiring complexity makes the system very difficult to reason about and to test — a change to one component may require threading a new argument through 4–5 layers.
+`make_handlers()` accepts 25 parameters. `ProactiveScheduler.__init__()` takes 18 dependencies. `ToolRegistry.__init__()` takes 23 keyword arguments. `main.py` instantiates 16 memory-related objects before startup is complete. This wiring complexity makes the system very difficult to reason about and to test — a change to one component may require threading a new argument through 4–5 layers.
 
 #### (e) The `_late` dict anti-pattern
 
@@ -95,7 +95,7 @@ Both exist, both are active, and the tool wrappers are thin pass-throughs. There
 
 #### (i) Dead or vestigial client code
 
-`ClaudeDesktopClient` and `MoonshotClient` are instantiated unconditionally in `main.py`, but their use is conditional on environment variables (`CLAUDE_DESKTOP_ENABLED`, `MOONSHOT_API_KEY`). `MistralClient` is used by the router, but the router is bypassed in the primary path. These clients add startup cost and complexity with minimal benefit in production.
+`MistralClient` and `MoonshotClient` are instantiated unconditionally in `main.py`; `ClaudeDesktopClient` is optional in `ModelRouter` but `main.py` never passes it. Since the router is bypassed in the primary path, all three add startup cost with minimal benefit in production.
 
 ---
 
@@ -263,7 +263,7 @@ All proactive triggers (reminder, morning briefing, evening check-in, afternoon 
 
 ### 4.4 Evaluate
 
-- `HeartbeatHandler`: useful concept but currently wires 9 dependencies; assess whether it can be simplified into a scheduled tool call
+- `HeartbeatHandler`: useful concept but currently wires 9 dependencies; assess whether it can be simplified into a scheduled tool call. See [BUG-heartbeat-premature-date-anniversary-reminder](../bugs/BUG-heartbeat-premature-date-anniversary-reminder.md) for a related correctness issue (date-specific facts surfaced without date verification)
 - `DiagnosticsRunner`: valuable, but 9 dependencies; could be a tool that collects from well-defined status methods
 - `FileIndexer` + RAG: useful feature but adds 4 background tasks at startup; should start lazily without blocking
 

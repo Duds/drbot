@@ -9,12 +9,13 @@ from remy.bot.handlers.callbacks import (
     make_step_limit_keyboard,
     store_pending_archive,
     make_archive_keyboard,
-    make_suggested_actions_keyboard,
+    make_proactive_keyboard,
     make_callback_handler,
     store_reminder_payload,
     make_reminder_keyboard,
     store_run_again_payload,
     make_run_again_keyboard,
+    make_suggested_actions_keyboard,
 )
 
 
@@ -135,6 +136,50 @@ class TestStoreReminderPayload:
         t1 = store_reminder_payload(1, 100, "A", one_time=True)
         t2 = store_reminder_payload(1, 100, "B", one_time=True)
         assert t1 != t2
+
+
+class TestMakeProactiveKeyboard:
+    """Phase 3.12: Unified keyboard factory for proactive messages."""
+
+    def test_reminder_returns_keyboard_with_snooze_and_done(self):
+        config = {
+            "type": "reminder",
+            "user_id": 12345,
+            "chat_id": 999,
+            "label": "Standup",
+            "automation_id": 1,
+            "one_time": False,
+        }
+        kb = make_proactive_keyboard(config)
+        assert kb is not None
+        assert len(kb.inline_keyboard) == 1
+        row = kb.inline_keyboard[0]
+        assert len(row) == 3
+        labels = [b.text for b in row]
+        assert "Snooze 5m" in labels
+        assert "Snooze 15m" in labels
+        assert "Done" in labels
+
+    def test_suggested_actions_returns_keyboard_with_add_to_calendar(self):
+        config = {
+            "type": "suggested_actions",
+            "actions": [
+                {
+                    "label": "Add to calendar",
+                    "callback_id": "add_to_calendar",
+                    "payload": {},
+                },
+            ],
+            "user_id": 12345,
+        }
+        kb = make_proactive_keyboard(config)
+        assert kb is not None
+        assert len(kb.inline_keyboard) == 1
+        assert len(kb.inline_keyboard[0]) >= 1
+
+    def test_empty_config_returns_none(self):
+        assert make_proactive_keyboard({}) is None
+        assert make_proactive_keyboard(None) is None
 
 
 class TestMakeReminderKeyboard:

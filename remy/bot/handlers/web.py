@@ -197,26 +197,6 @@ def make_web_handlers(
             reply_markup=run_again_markup,
         )
 
-    async def save_url_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """/save-url <url> [note] — save a bookmark."""
-        if update.message is None or update.effective_user is None:
-            return
-        if await reject_unauthorized(update):
-            return
-        if not context.args:
-            await update.message.reply_text("Usage: /save-url <url> [optional note]")
-            return
-        if fact_store is None:
-            await update.message.reply_text("Memory not available.")
-            return
-        url = context.args[0]
-        note = " ".join(context.args[1:]) if len(context.args) > 1 else ""
-        content = f"{url} — {note}" if note else url
-        await fact_store.add(update.effective_user.id, "bookmark", content)
-        await update.message.reply_text(
-            f"🔖 Bookmark saved: {content}", parse_mode="Markdown"
-        )
-
     async def bookmarks_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """/bookmarks [filter] — list saved bookmarks, optionally filtered."""
         if update.message is None or update.effective_user is None:
@@ -378,7 +358,6 @@ def make_web_handlers(
     return {
         "search": search_command,
         "research": research_command,
-        "save-url": save_url_command,
         "bookmarks": bookmarks_command,
         "grocery-list": grocery_list_command,
         "price-check": price_check_command,

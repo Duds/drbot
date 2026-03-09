@@ -1,7 +1,26 @@
 """Shared fixtures for remy tests."""
 
+from __future__ import annotations
 
 import pytest
+
+
+def minimal_make_handlers_kwargs(**overrides):
+    """Minimal kwargs for make_handlers() — use for tests that need a minimal setup."""
+    from remy.bot.handler_deps import CoreDeps, GoogleDeps, MemoryDeps, SchedulerDeps
+
+    base = {
+        "session_manager": None,
+        "claude_client": None,
+        "db": None,
+        "tool_registry": None,
+        "memory_deps": MemoryDeps(conv_store=None),
+        "google_deps": GoogleDeps(),
+        "scheduler_deps": None,
+        "core_deps": None,
+    }
+    base.update(overrides)
+    return base
 
 
 @pytest.fixture

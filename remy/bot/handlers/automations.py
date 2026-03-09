@@ -21,7 +21,7 @@ from ..session import SessionManager
 from ...utils.telegram_formatting import format_telegram_message
 
 if TYPE_CHECKING:
-    from ...agents.subagent_runner import SubagentRunner
+    from ...agents.orchestrator import BoardOrchestrator
     from ...memory.automations import AutomationStore
     from ...memory.background_jobs import BackgroundJobStore
     from ...memory.injector import MemoryInjector
@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 def make_automation_handlers(
     *,
     claude_client=None,
-    subagent_runner: "SubagentRunner | None" = None,
+    board_orchestrator: "BoardOrchestrator | None" = None,
     memory_injector: "MemoryInjector | None" = None,
     automation_store: "AutomationStore | None" = None,
     job_store: "BackgroundJobStore | None" = None,
@@ -363,9 +363,9 @@ def make_automation_handlers(
         if await reject_unauthorized(update):
             return
 
-        if subagent_runner is None:
+        if board_orchestrator is None:
             await update.message.reply_text(
-                "Board of Directors not available — subagent runner not configured."
+                "Board of Directors not available — not configured."
             )
             return
 
@@ -394,6 +394,8 @@ def make_automation_handlers(
             except Exception as exc:
                 logger.warning("Board memory injection failed: %s", exc)
 
+        import asyncio
+
         from ..working_message import WorkingMessage
         from ...agents.background import BackgroundTaskRunner
 
@@ -412,13 +414,21 @@ def make_automation_handlers(
             chat_action=ChatAction.UPLOAD_DOCUMENT,
             run_again_markup=run_again_markup,
         )
-        try:
-            subagent_runner.start_board(
-                background_runner,
-                topic=topic,
-                user_context=user_context,
+
+        async def _board_coro() -> str:
+            chunks = [f"🏛 *Board of Directors: {topic}*\n\n"]
+            async for chunk in board_orchestrator.run_board_streaming(
+                topic,
+                user_context,
                 user_id=user_id,
                 session_key=session_key,
+            ):
+                chunks.append(chunk)
+            return "".join(chunks)
+
+        try:
+            asyncio.create_task(
+                background_runner.run(_board_coro(), label="board analysis")
             )
         except RuntimeError as e:
             await wm.stop()

@@ -102,6 +102,7 @@ class TelegramBot:
 
     def _register_handlers(self, handlers: dict) -> None:
         app = self.application
+        # Phase 3: Collapsed command surface — core + domain only (≤15)
         app.add_handler(CommandHandler("start", handlers["start"]))
         app.add_handler(CommandHandler("help", handlers["help"]))
         app.add_handler(CommandHandler("cancel", handlers["cancel"]))
@@ -109,94 +110,14 @@ class TelegramBot:
         app.add_handler(CommandHandler("compact", handlers["compact"]))
         app.add_handler(CommandHandler("setmychat", handlers["setmychat"]))
         app.add_handler(CommandHandler("briefing", handlers["briefing"]))
-        app.add_handler(CommandHandler("relay", handlers["relay"]))
-        app.add_handler(CommandHandler("goals", handlers["goals"]))
-        if (h := handlers.get("delete_conversation")) is not None:
-            app.add_handler(CommandHandler("delete_conversation", h))
-        if (h := handlers.get("read")) is not None:
-            app.add_handler(CommandHandler("read", h))
-        if (h := handlers.get("write")) is not None:
-            app.add_handler(CommandHandler("write", h))
-        if (h := handlers.get("ls")) is not None:
-            app.add_handler(CommandHandler("ls", h))
-        if (h := handlers.get("find")) is not None:
-            app.add_handler(CommandHandler("find", h))
-        if (h := handlers.get("set_project")) is not None:
-            app.add_handler(CommandHandler("set_project", h))
-        if (h := handlers.get("project_status")) is not None:
-            app.add_handler(CommandHandler("project_status", h))
-        if (h := handlers.get("scan_downloads")) is not None:
-            app.add_handler(CommandHandler("scan_downloads", h))
-        if (h := handlers.get("organize")) is not None:
-            app.add_handler(CommandHandler("organize", h))
-        if (h := handlers.get("clean")) is not None:
-            app.add_handler(CommandHandler("clean", h))
-        if (h := handlers.get("calendar")) is not None:
-            app.add_handler(CommandHandler("calendar", h))
-        if (h := handlers.get("calendar-today")) is not None:
-            app.add_handler(CommandHandler("calendar_today", h))
-        if (h := handlers.get("schedule")) is not None:
-            app.add_handler(CommandHandler("schedule", h))
-        if (h := handlers.get("gmail-unread")) is not None:
-            app.add_handler(CommandHandler("gmail_unread", h))
-        if (h := handlers.get("gmail-unread-summary")) is not None:
-            app.add_handler(CommandHandler("gmail_unread_summary", h))
-        if (h := handlers.get("gmail-classify")) is not None:
-            app.add_handler(CommandHandler("gmail_classify", h))
-        if (h := handlers.get("gdoc")) is not None:
-            app.add_handler(CommandHandler("gdoc", h))
-        if (h := handlers.get("gdoc-append")) is not None:
-            app.add_handler(CommandHandler("gdoc_append", h))
-        if (h := handlers.get("contacts")) is not None:
-            app.add_handler(CommandHandler("contacts", h))
-        if (h := handlers.get("contacts-birthday")) is not None:
-            app.add_handler(CommandHandler("contacts_birthday", h))
-        if (h := handlers.get("contacts-details")) is not None:
-            app.add_handler(CommandHandler("contacts_details", h))
-        if (h := handlers.get("contacts-note")) is not None:
-            app.add_handler(CommandHandler("contacts_note", h))
-        if (h := handlers.get("contacts-prune")) is not None:
-            app.add_handler(CommandHandler("contacts_prune", h))
-        if (h := handlers.get("search")) is not None:
-            app.add_handler(CommandHandler("search", h))
-        if (h := handlers.get("research")) is not None:
-            app.add_handler(CommandHandler("research", h))
-        if (h := handlers.get("save-url")) is not None:
-            app.add_handler(CommandHandler("save_url", h))
-        if (h := handlers.get("bookmarks")) is not None:
-            app.add_handler(CommandHandler("bookmarks", h))
-        if (h := handlers.get("grocery-list")) is not None:
-            app.add_handler(CommandHandler("grocery_list", h))
-        if (h := handlers.get("price-check")) is not None:
-            app.add_handler(CommandHandler("price_check", h))
+        app.add_handler(
+            CommandHandler("delete_conversation", handlers["delete_conversation"])
+        )
         app.add_handler(CommandHandler("board", handlers["board"]))
         app.add_handler(CommandHandler("logs", handlers["logs"]))
-        if (h := handlers.get("schedule-daily")) is not None:
-            app.add_handler(CommandHandler("schedule_daily", h))
-        if (h := handlers.get("schedule-weekly")) is not None:
-            app.add_handler(CommandHandler("schedule_weekly", h))
-        if (h := handlers.get("list-automations")) is not None:
-            app.add_handler(CommandHandler("list_automations", h))
-        if (h := handlers.get("unschedule")) is not None:
-            app.add_handler(CommandHandler("unschedule", h))
-        if (h := handlers.get("retrospective")) is not None:
-            app.add_handler(CommandHandler("retrospective", h))
-        if (h := handlers.get("breakdown")) is not None:
-            app.add_handler(CommandHandler("breakdown", h))
-        if (h := handlers.get("stats")) is not None:
-            app.add_handler(CommandHandler("stats", h))
-        if (h := handlers.get("costs")) is not None:
-            app.add_handler(CommandHandler("costs", h))
-        if (h := handlers.get("goal-status")) is not None:
-            app.add_handler(CommandHandler("goal_status", h))
-        if (h := handlers.get("gmail-search")) is not None:
-            app.add_handler(CommandHandler("gmail_search", h))
-        if (h := handlers.get("gmail-read")) is not None:
-            app.add_handler(CommandHandler("gmail_read", h))
-        if (h := handlers.get("gmail-labels")) is not None:
-            app.add_handler(CommandHandler("gmail_labels", h))
-        if (h := handlers.get("gmail-create-label")) is not None:
-            app.add_handler(CommandHandler("gmail_create_label", h))
+        app.add_handler(CommandHandler("stats", handlers["stats"]))
+        app.add_handler(CommandHandler("costs", handlers["costs"]))
+        app.add_handler(CommandHandler("diagnostics", handlers["diagnostics"]))
         app.add_handler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, handlers["message"])
         )

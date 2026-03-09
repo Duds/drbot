@@ -19,7 +19,7 @@ class TestSubmoduleImports:
         assert hasattr(base, "reject_unauthorized")
         assert hasattr(base, "_build_message_from_turn")
         assert hasattr(base, "_trim_messages_to_budget")
-        assert hasattr(base, "MessageRotator")
+        # Phase 3.11: MessageRotator removed; WorkingMessage in working_message.py
 
     def test_import_core(self):
         from remy.bot.handlers import core
@@ -176,7 +176,6 @@ class TestMakeHandlersFactories:
         expected = {
             "search",
             "research",
-            "save-url",
             "bookmarks",
             "grocery-list",
             "price-check",
@@ -244,11 +243,9 @@ class TestMakeHandlersFactories:
         from unittest.mock import MagicMock
 
         mock_session = MagicMock()
-        mock_router = MagicMock()
         mock_conv = MagicMock()
         handlers = make_chat_handlers(
             session_manager=mock_session,
-            router=mock_router,
             conv_store=mock_conv,
         )
         assert "message" in handlers
@@ -259,33 +256,24 @@ class TestComposedMakeHandlers:
 
     def test_make_handlers_returns_all_handlers(self):
         from remy.bot.handlers import make_handlers
+        from tests.conftest import minimal_make_handlers_kwargs
 
-        handlers = make_handlers(
-            session_manager=None,
-            router=None,
-            conv_store=None,
-        )
+        handlers = make_handlers(**minimal_make_handlers_kwargs())
         assert len(handlers) >= 50
 
     def test_make_handlers_includes_core_commands(self):
         from remy.bot.handlers import make_handlers
+        from tests.conftest import minimal_make_handlers_kwargs
 
-        handlers = make_handlers(
-            session_manager=None,
-            router=None,
-            conv_store=None,
-        )
+        handlers = make_handlers(**minimal_make_handlers_kwargs())
         core_commands = {"start", "help", "cancel", "status"}
         assert core_commands.issubset(set(handlers.keys()))
 
     def test_make_handlers_includes_google_commands(self):
         from remy.bot.handlers import make_handlers
+        from tests.conftest import minimal_make_handlers_kwargs
 
-        handlers = make_handlers(
-            session_manager=None,
-            router=None,
-            conv_store=None,
-        )
+        handlers = make_handlers(**minimal_make_handlers_kwargs())
         google_commands = {
             "gmail-unread",
             "calendar",
@@ -296,32 +284,23 @@ class TestComposedMakeHandlers:
 
     def test_make_handlers_includes_file_commands(self):
         from remy.bot.handlers import make_handlers
+        from tests.conftest import minimal_make_handlers_kwargs
 
-        handlers = make_handlers(
-            session_manager=None,
-            router=None,
-            conv_store=None,
-        )
+        handlers = make_handlers(**minimal_make_handlers_kwargs())
         file_commands = {"read", "write", "ls", "find"}
         assert file_commands.issubset(set(handlers.keys()))
 
     def test_make_handlers_includes_message_handler(self):
         from remy.bot.handlers import make_handlers
+        from tests.conftest import minimal_make_handlers_kwargs
 
-        handlers = make_handlers(
-            session_manager=None,
-            router=None,
-            conv_store=None,
-        )
+        handlers = make_handlers(**minimal_make_handlers_kwargs())
         assert "message" in handlers
 
     def test_all_handlers_are_callable(self):
         from remy.bot.handlers import make_handlers
+        from tests.conftest import minimal_make_handlers_kwargs
 
-        handlers = make_handlers(
-            session_manager=None,
-            router=None,
-            conv_store=None,
-        )
+        handlers = make_handlers(**minimal_make_handlers_kwargs())
         for name, handler in handlers.items():
             assert callable(handler), f"Handler '{name}' is not callable"

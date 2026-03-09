@@ -63,35 +63,22 @@ def _trigger_text_for_proactive(label: str, context: dict | None) -> str:
     return f"{PROACTIVE_PREFIX} type=reminder label={label!r}"
 
 
-def _reminder_system_prompt(label: str) -> str:
-    """
-    Augment SOUL.md with a reminder-trigger context block so Claude knows
-    it is acting proactively, not responding to a user message.
-    """
-    return (
-        f"{settings.soul_md}\n\n"
-        "---\n"
-        "REMINDER TRIGGER: You have been woken up by a scheduled reminder Dale set.\n"
-        f'Reminder: "{label}"\n\n'
+# Proactive trigger scenarios — system prompt templates
+_PROACTIVE_SCENARIOS: dict[str, tuple[str, str]] = {
+    "reminder": (
+        "REMINDER TRIGGER",
+        "You have been woken up by a scheduled reminder Dale set.\n"
+        "{label_line}\n\n"
         "You are initiating this conversation proactively — Dale did not just send a "
         "message. Reason about what this reminder means and take the most helpful action. "
         "Do NOT just echo the reminder label back.\n"
         "Good responses: check the calendar, draft a follow-up message, look up the "
         "grocery list, ask a focused clarifying question, or take direct action with a tool.\n"
-        "Use tools if appropriate. Be concise and action-oriented."
-    )
-
-
-def _briefing_system_prompt(context: dict) -> str:
-    """
-    US-conversational-briefing-via-remy: system prompt for morning briefing.
-    Injects structured context so Claude composes a natural, prioritised message.
-    """
-    ctx_json = json.dumps(context, indent=0)
-    return (
-        f"{settings.soul_md}\n\n"
-        "---\n"
-        "MORNING BRIEFING: You have structured context for Dale's day. "
+        "Use tools if appropriate. Be concise and action-oriented.",
+    ),
+    "briefing": (
+        "MORNING BRIEFING",
+        "You have structured context for Dale's day. "
         "Compose a short, warm, conversational message.\n\n"
         "- Use Australian date format (DD/MM/YYYY) and 24-hour time\n"
         "- Prioritise what matters most; don't list everything verbatim\n"
@@ -100,67 +87,66 @@ def _briefing_system_prompt(context: dict) -> str:
         "- Optionally mention downloads cleanup or stale plans if relevant\n"
         "- If relay_unread or relay_pending are non-zero, add one line: e.g. '📬 N unread message(s) from cowork.' and/or '📋 N pending task(s) from cowork.'\n\n"
         "Structured context:\n"
-        f"```json\n{ctx_json}\n```"
-    )
-
-
-def _evening_checkin_system_prompt(context: dict) -> str:
-    """
-    US-remy-mediated-reminders: system prompt for evening check-in.
-    Injects stale goals and optional calendar so Claude composes a warm nudge.
-    """
-    ctx_json = json.dumps(context, indent=0)
-    return (
-        f"{settings.soul_md}\n\n"
-        "---\n"
-        "EVENING CHECK-IN: Dale hasn't mentioned these goals recently. "
+        "```json\n{context_json}\n```",
+    ),
+    "evening_checkin": (
+        "EVENING CHECK-IN",
+        "Dale hasn't mentioned these goals recently. "
         "Compose a short, warm nudge — not a list. You're Remy checking in, not a task reminder.\n\n"
         "- Reference the goals naturally; one or two sentences is enough\n"
         "- If there's calendar context (today's events), you can tie it in (e.g. 'You had X today — still on for Y?')\n"
         "- Invite a quick reply; don't overwhelm\n\n"
         "Structured context:\n"
-        f"```json\n{ctx_json}\n```"
-    )
-
-
-def _afternoon_checkin_system_prompt(context: dict) -> str:
-    """
-    US-remy-mediated-reminders: system prompt for afternoon focus (5pm / mid-day check-in).
-    Injects top goal and remaining calendar so Claude composes a focused nudge.
-    """
-    ctx_json = json.dumps(context, indent=0)
-    return (
-        f"{settings.soul_md}\n\n"
-        "---\n"
-        "AFTERNOON FOCUS CHECK-IN: Mid-day body-double nudge. "
+        "```json\n{context_json}\n```",
+    ),
+    "afternoon_checkin": (
+        "AFTERNOON FOCUS CHECK-IN",
+        "Mid-day body-double nudge. "
         "Compose a short, warm focus message — you're Remy helping Dale stay on track.\n\n"
         "- If there's a top_goal, centre the nudge on it; ask how it's going\n"
         "- If there's remaining_calendar, mention what's still on today's schedule\n"
         "- Keep it to one or two sentences; encourage the next few focused hours\n"
         "- If no goals yet, gently invite Dale to name what matters today\n\n"
         "Structured context:\n"
-        f"```json\n{ctx_json}\n```"
-    )
-
-
-def _afternoon_check_system_prompt(context: dict) -> str:
-    """
-    US-remy-mediated-reminders: afternoon check-in (default 5pm).
-    Compose a compassionate, context-relevant message; intent is in SOUL / HEARTBEAT.md.
-    """
-    ctx_json = json.dumps(context, indent=0)
-    return (
-        f"{settings.soul_md}\n\n"
-        "---\n"
-        "AFTERNOON CHECK-IN: This is the daily afternoon check-in (typically 5pm). "
+        "```json\n{context_json}\n```",
+    ),
+    "afternoon_check": (
+        "AFTERNOON CHECK-IN",
+        "This is the daily afternoon check-in (typically 5pm). "
         "Your job is to meet Dale where he is — compassionate, context-aware, never preachy or generic.\n\n"
         "- Use what you know from memory and today's conversation: how his day went, what he's working on, how he seems\n"
         "- One or two short sentences; warmth and presence over advice\n"
         "- If context includes goals or calendar, you can gently tie in (e.g. 'You had X today — how are you doing heading into the evening?')\n"
         "- Sound like Remy checking in, not a generic reminder\n\n"
         "Structured context (goals, calendar, etc.):\n"
-        f"```json\n{ctx_json}\n```"
-    )
+        "```json\n{context_json}\n```",
+    ),
+}
+
+
+def build_proactive_system_prompt(
+    scenario: str, context: dict | None = None, label: str = ""
+) -> str:
+    """
+    Build the system prompt for a proactive trigger.
+
+    scenario: one of "reminder", "briefing", "evening_checkin", "afternoon_checkin", "afternoon_check"
+    context: structured dict for context-carrying triggers (briefing, check-ins); None for reminder
+    label: user's reminder label (only used when scenario is "reminder")
+    """
+    if scenario not in _PROACTIVE_SCENARIOS:
+        scenario = "briefing"
+
+    title, body_template = _PROACTIVE_SCENARIOS[scenario]
+
+    if scenario == "reminder":
+        label_line = f'Reminder: "{label}"' if label else "Reminder (no label)"
+        body = body_template.format(label_line=label_line)
+    else:
+        ctx_json = json.dumps(context or {}, indent=0)
+        body = body_template.format(context_json=ctx_json)
+
+    return f"{settings.soul_md}\n\n---\n{title}: {body}"
 
 
 async def compose_proactive_message(
@@ -256,15 +242,16 @@ async def run_proactive_trigger(
 
         if context is not None:
             if context.get("evening_checkin"):
-                system_prompt = _evening_checkin_system_prompt(context)
+                scenario = "evening_checkin"
             elif context.get("afternoon_checkin"):
-                system_prompt = _afternoon_checkin_system_prompt(context)
+                scenario = "afternoon_checkin"
             elif context.get("afternoon_check"):
-                system_prompt = _afternoon_check_system_prompt(context)
+                scenario = "afternoon_check"
             else:
-                system_prompt = _briefing_system_prompt(context)
+                scenario = "briefing"
+            system_prompt = build_proactive_system_prompt(scenario, context)
         else:
-            system_prompt = _reminder_system_prompt(label)
+            system_prompt = build_proactive_system_prompt("reminder", label=label)
 
         # ------------------------------------------------------------------ #
         # 3. Send placeholder to Telegram                                      #
@@ -370,64 +357,54 @@ async def run_proactive_trigger(
                 logger.debug("Could not delete react_to_message status message: %s", e)
 
         # ------------------------------------------------------------------ #
-        # 4b. Attach keyboard to message                                      #
+        # 4b. Attach keyboard — unified factory (Phase 3.12)                   #
         #     Reminders: [Snooze 5m] [Snooze 15m] [Done]                       #
-        #     Briefings: [Add to calendar] only for suggested_events (US-proactive-buttons-decisions-only)
-        #     context["calendar"] = existing events (informational, no buttons) #
+        #     Briefings: [Add to calendar] for suggested_events only           #
         # ------------------------------------------------------------------ #
+        buttons_config = None
         if context is None:
-            try:
-                from .handlers.callbacks import (
-                    make_reminder_keyboard,
-                    store_reminder_payload,
-                )
-
-                token = store_reminder_payload(
-                    user_id=user_id,
-                    chat_id=chat_id,
-                    label=label,
-                    automation_id=automation_id,
-                    one_time=one_time,
-                )
-                keyboard = make_reminder_keyboard(token)
-                await bot.edit_message_reply_markup(
-                    chat_id=chat_id,
-                    message_id=sent.message_id,
-                    reply_markup=keyboard,
-                )
-            except Exception as e:
-                logger.debug("Could not attach reminder keyboard: %s", e)
+            buttons_config = {
+                "type": "reminder",
+                "user_id": user_id,
+                "chat_id": chat_id,
+                "label": label,
+                "automation_id": automation_id,
+                "one_time": one_time,
+            }
         elif context and (suggested := context.get("suggested_events")):
-            # Decisions only: [Add to calendar] only for suggested events to add, not existing calendar
-            try:
-                from .handlers.callbacks import make_suggested_actions_keyboard
+            actions = []
+            for item in (suggested or [])[:4]:
+                when = item.get("when")
+                title = (item.get("title") or "Event").strip()
+                if when and title:
+                    btn_label = f"📅 {title}"[:32]
+                    actions.append(
+                        {
+                            "label": btn_label,
+                            "callback_id": "add_to_calendar",
+                            "payload": {"title": title, "when": when},
+                        }
+                    )
+            if actions:
+                buttons_config = {
+                    "type": "suggested_actions",
+                    "actions": actions,
+                    "user_id": user_id,
+                }
 
-                actions = []
-                for item in (suggested or [])[:4]:  # Max 4 buttons (keyboard limit)
-                    when = item.get("when")
-                    title = (item.get("title") or "Event").strip()
-                    if when and title:
-                        label = f"📅 {title}"[:32]
-                        actions.append(
-                            {
-                                "label": label,
-                                "callback_id": "add_to_calendar",
-                                "payload": {"title": title, "when": when},
-                            }
-                        )
-                if actions:
-                    cal_keyboard = make_suggested_actions_keyboard(actions, user_id)
-                    if cal_keyboard is not None:
-                        await bot.edit_message_reply_markup(
-                            chat_id=chat_id,
-                            message_id=sent.message_id,
-                            reply_markup=cal_keyboard,
-                        )
+        if buttons_config:
+            try:
+                from .handlers.callbacks import make_proactive_keyboard
+
+                keyboard = make_proactive_keyboard(buttons_config)
+                if keyboard is not None:
+                    await bot.edit_message_reply_markup(
+                        chat_id=chat_id,
+                        message_id=sent.message_id,
+                        reply_markup=keyboard,
+                    )
             except Exception as e:
-                logger.debug(
-                    "Could not attach [Add to calendar] keyboard for suggested_events: %s",
-                    e,
-                )
+                logger.debug("Could not attach proactive keyboard: %s", e)
 
         # ------------------------------------------------------------------ #
         # 5. Persist conversation history                                       #

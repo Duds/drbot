@@ -10,13 +10,12 @@ import signal
 from pathlib import Path
 
 from .agents.orchestrator import BoardOrchestrator
-from .agents.subagent_runner import SubagentRunner
 from .ai.claude_client import ClaudeClient
 from .ai.mistral_client import MistralClient
 from .ai.moonshot_client import MoonshotClient
 from .ai.ollama_client import OllamaClient
-from .ai.router import ModelRouter
 from .ai.tools import ToolRegistry
+from .bot.handler_deps import CoreDeps, GoogleDeps, MemoryDeps, SchedulerDeps
 from .bot.handlers import make_handlers
 from .bot.heartbeat_handler import HeartbeatHandler
 from .bot.session import SessionManager
@@ -50,6 +49,7 @@ from .config_audit import log_startup_config
 from .delivery import OutboundQueue
 from .diagnostics import DiagnosticsRunner
 from .scheduler.proactive import ProactiveScheduler
+from .startup_context import StartupContext
 from .voice.transcriber import VoiceTranscriber
 
 logger = logging.getLogger(__name__)
@@ -104,9 +104,6 @@ def main() -> None:
     moonshot_client = MoonshotClient()
     ollama_client = OllamaClient()
     db = DatabaseManager()
-    router = ModelRouter(
-        claude_client, mistral_client, moonshot_client, ollama_client, db=db
-    )
     session_manager = SessionManager()
     conv_store = ConversationStore(settings.sessions_dir)
 
@@ -114,9 +111,8 @@ def main() -> None:
     # Bot reference is set in post_init once PTB application is ready
     outbound_queue = OutboundQueue(db_path=db.db_path, bot=None)
 
-    # Board of Directors orchestrator (Phase 5); subagent runner for /board (US-subagents-next-plan)
+    # Board of Directors orchestrator (Phase 5); /board invokes via BackgroundTaskRunner
     board_orchestrator = BoardOrchestrator(claude_client)
-    subagent_runner = SubagentRunner(board_orchestrator)
 
     # Tool registry — enables native Anthropic tool use (function calling)
     # Wired after memory components are initialised below
@@ -213,10 +209,9 @@ def main() -> None:
     except Exception as e:
         logger.warning("Google Workspace init failed: %s", e)
 
-    # Mutable container for late-binding the proactive scheduler and outbound queue.
+    # Late-bound startup context (Phase 1.5). Replaces _late dict with typed dataclass.
     # Must be defined before ToolRegistry so it can be passed in as scheduler_ref.
-    # The /briefing proxy and tool executors read from this dict at call time.
-    _late: dict = {"proactive_scheduler": None, "outbound_queue": outbound_queue}
+    startup_ctx = StartupContext(outbound_queue=outbound_queue)
 
     # Tool registry — all tools wired in for natural language invocation.
     # Google Workspace clients may be None if not configured; tools degrade gracefully.
@@ -237,7 +232,7 @@ def main() -> None:
         docs_client=google_docs,
         # Phase 5: automations
         automation_store=automation_store,
-        scheduler_ref=_late,
+        scheduler_ref=startup_ctx,
         # Phase 6: analytics
         conversation_analyzer=conv_analyzer,
         # Phase 7 Step 2: persistent job tracking
@@ -252,7 +247,7 @@ def main() -> None:
     )
 
     # Diagnostics runner — comprehensive health checks
-    # Scheduler is late-bound via _late dict
+    # Scheduler is late-bound via startup_ctx
     diagnostics_runner = DiagnosticsRunner(
         db=db,
         embeddings=embeddings,
@@ -263,10 +258,10 @@ def main() -> None:
         moonshot_client=moonshot_client,
         ollama_client=ollama_client,
         tool_registry=tool_registry,
-        scheduler=None,  # Late-bound via _late
+        scheduler=None,  # Late-bound via startup_ctx
         settings=get_settings(),
     )
-    _late["diagnostics_runner"] = diagnostics_runner
+    startup_ctx["diagnostics_runner"] = diagnostics_runner
 
     # Wire diagnostics runner and queue to health server for /diagnostics endpoint
     set_diagnostics_runner(diagnostics_runner)
@@ -281,7 +276,7 @@ def main() -> None:
 
     async def _briefing_proxy(update, context):
         """Late-bound /briefing handler — delegates to scheduler once available."""
-        sched = _late["proactive_scheduler"]
+        sched = startup_ctx.proactive_scheduler
         if sched is None:
             await update.message.reply_text("Proactive scheduler not running.")
             return
@@ -289,32 +284,42 @@ def main() -> None:
         await sched.send_morning_briefing_now()
 
     # Build all handlers; /briefing is overridden with the late-bound proxy below
-    handlers = make_handlers(
-        session_manager=session_manager,
-        router=router,
+    memory_deps = MemoryDeps(
         conv_store=conv_store,
-        claude_client=claude_client,
-        fact_extractor=fact_extractor,
+        knowledge_extractor=knowledge_extractor,
+        knowledge_store=knowledge_store,
         fact_store=fact_store,
-        goal_extractor=goal_extractor,
         goal_store=goal_store,
         memory_injector=memory_injector,
-        voice_transcriber=voice_transcriber,
-        proactive_scheduler=None,  # /goals works immediately; /briefing via proxy
-        subagent_runner=subagent_runner,
-        db=db,
-        tool_registry=tool_registry,  # Native Anthropic tool use
-        google_calendar=google_calendar,
-        google_gmail=google_gmail,
-        google_docs=google_docs,
-        google_contacts=google_contacts,
-        automation_store=automation_store,
-        scheduler_ref=_late,  # mutable container; scheduler set after post_init
-        conversation_analyzer=conv_analyzer,
-        job_store=job_store,
         plan_store=plan_store,
+    )
+    google_deps = GoogleDeps(
+        calendar=google_calendar,
+        gmail=google_gmail,
+        docs=google_docs,
+        contacts=google_contacts,
+    )
+    scheduler_deps = SchedulerDeps(
+        proactive_scheduler=None,  # /briefing via proxy
+        scheduler_ref=startup_ctx,
+        automation_store=automation_store,
+        job_store=job_store,
+    )
+    core_deps = CoreDeps(
+        board_orchestrator=board_orchestrator,
+        voice_transcriber=voice_transcriber,
+        conversation_analyzer=conv_analyzer,
         diagnostics_runner=diagnostics_runner,
-        knowledge_store=knowledge_store,
+    )
+    handlers = make_handlers(
+        session_manager=session_manager,
+        claude_client=claude_client,
+        db=db,
+        tool_registry=tool_registry,
+        memory_deps=memory_deps,
+        google_deps=google_deps,
+        scheduler_deps=scheduler_deps,
+        core_deps=core_deps,
     )
     handlers["briefing"] = _briefing_proxy
 
@@ -358,7 +363,7 @@ def main() -> None:
 
         # Initialise outbound queue with bot reference and replay pending messages
         outbound_queue.bot = app.bot
-        _late["bot"] = app.bot  # Used by react_to_message tool
+        startup_ctx["bot"] = app.bot  # Used by react_to_message tool
         replayed = await outbound_queue.replay_on_startup()
         if replayed > 0:
             logger.info("Outbound queue: replaying %d pending messages", replayed)
@@ -381,10 +386,11 @@ def main() -> None:
         sched = ProactiveScheduler(
             app.bot,
             goal_store,
-            fact_store,
-            google_calendar,
-            google_contacts,
+            fact_store=fact_store,
+            calendar_client=google_calendar,
+            contacts_client=google_contacts,
             gmail_client=google_gmail,
+            knowledge_store=knowledge_store,
             automation_store=automation_store,
             claude_client=claude_client,
             conversation_analyzer=conv_analyzer,
@@ -398,7 +404,7 @@ def main() -> None:
             heartbeat_handler=heartbeat_handler,
             counter_store=counter_store,
         )
-        _late["proactive_scheduler"] = sched
+        startup_ctx["proactive_scheduler"] = sched
         _proactive_ref.append(sched)
         sched.start()
 

@@ -4,11 +4,8 @@ Telegram command and message handlers.
 This package provides a modular structure for Telegram bot handlers.
 All handlers acquire the per-user session lock before processing.
 
-Two processing paths for text input:
-  - Tool-aware path (preferred): uses ClaudeClient.stream_with_tools() for
-    native Anthropic function calling. Claude autonomously decides when to
-    invoke get_logs, get_goals, get_facts, run_board, or check_status.
-  - Router fallback: used when tool_registry is not available.
+Tool-aware path: uses ClaudeClient.stream_with_tools() for native Anthropic
+function calling. Claude autonomously decides when to invoke tools.
 
 Modules:
   - base: Core utilities, auth checks, message building
@@ -53,21 +50,21 @@ from .privacy import make_privacy_handlers
 from .chat import make_chat_handlers
 from .reactions import make_reaction_handler
 from .callbacks import make_callback_handler
+from ..handler_deps import CoreDeps, GoogleDeps, MemoryDeps, SchedulerDeps
 
 if TYPE_CHECKING:
     from ..session import SessionManager
-    from ...ai.router import ModelRouter
     from ...ai.tools import ToolRegistry
     from ...memory.conversations import ConversationStore
-    from ...memory.facts import FactExtractor, FactStore
-    from ...memory.goals import GoalExtractor, GoalStore
     from ...memory.injector import MemoryInjector
+    from ...memory.facts import FactStore
+    from ...memory.goals import GoalStore
     from ...memory.knowledge import KnowledgeStore
     from ...memory.automations import AutomationStore
     from ...memory.background_jobs import BackgroundJobStore
     from ...memory.plans import PlanStore
     from ...memory.database import DatabaseManager
-    from ...agents.subagent_runner import SubagentRunner
+    from ...agents.orchestrator import BoardOrchestrator
     from ...scheduler.proactive import ProactiveScheduler
     from ...analytics.analyzer import ConversationAnalyzer
     from ...voice.transcriber import VoiceTranscriber
@@ -80,30 +77,13 @@ if TYPE_CHECKING:
 
 def make_handlers(
     session_manager: "SessionManager",
-    router: "ModelRouter",
-    conv_store: "ConversationStore",
     claude_client=None,
-    fact_extractor: "FactExtractor | None" = None,
-    fact_store: "FactStore | None" = None,
-    goal_extractor: "GoalExtractor | None" = None,
-    goal_store: "GoalStore | None" = None,
-    memory_injector: "MemoryInjector | None" = None,
-    voice_transcriber: "VoiceTranscriber | None" = None,
-    proactive_scheduler: "ProactiveScheduler | None" = None,
-    subagent_runner: "SubagentRunner | None" = None,
     db: "DatabaseManager | None" = None,
     tool_registry: "ToolRegistry | None" = None,
-    google_calendar: "CalendarClient | None" = None,
-    google_gmail: "GmailClient | None" = None,
-    google_docs: "DocsClient | None" = None,
-    google_contacts: "ContactsClient | None" = None,
-    automation_store: "AutomationStore | None" = None,
-    scheduler_ref: dict | None = None,
-    conversation_analyzer: "ConversationAnalyzer | None" = None,
-    job_store: "BackgroundJobStore | None" = None,
-    plan_store: "PlanStore | None" = None,
-    diagnostics_runner: "DiagnosticsRunner | None" = None,
-    knowledge_store: "KnowledgeStore | None" = None,
+    memory_deps: MemoryDeps | None = None,
+    google_deps: GoogleDeps | None = None,
+    scheduler_deps: SchedulerDeps | None = None,
+    core_deps: CoreDeps | None = None,
 ):
     """
     Factory that returns handler functions bound to shared dependencies.
@@ -111,6 +91,11 @@ def make_handlers(
 
     This function composes handlers from all submodules into a single dict.
     """
+    mem = memory_deps or MemoryDeps(conv_store=None)
+    g = google_deps or GoogleDeps()
+    sched = scheduler_deps or SchedulerDeps()
+    core = core_deps or CoreDeps()
+
     handlers = {}
 
     # Core commands (start, help, cancel, status, setmychat, briefing)
@@ -118,8 +103,8 @@ def make_handlers(
         make_core_handlers(
             session_manager=session_manager,
             tool_registry=tool_registry,
-            proactive_scheduler=proactive_scheduler,
-            scheduler_ref=scheduler_ref,
+            proactive_scheduler=sched.proactive_scheduler,
+            scheduler_ref=sched.scheduler_ref,
         )
     )
 
@@ -127,45 +112,28 @@ def make_handlers(
     handlers.update(
         make_file_handlers(
             claude_client=claude_client,
-            fact_store=fact_store,
+            fact_store=mem.fact_store,
         )
     )
 
     # Gmail
-    handlers.update(
-        make_email_handlers(
-            google_gmail=google_gmail,
-        )
-    )
+    handlers.update(make_email_handlers(google_gmail=g.gmail))
 
     # Calendar
-    handlers.update(
-        make_calendar_handlers(
-            google_calendar=google_calendar,
-        )
-    )
+    handlers.update(make_calendar_handlers(google_calendar=g.calendar))
 
     # Contacts
-    handlers.update(
-        make_contacts_handlers(
-            google_contacts=google_contacts,
-        )
-    )
+    handlers.update(make_contacts_handlers(google_contacts=g.contacts))
 
     # Docs
-    handlers.update(
-        make_docs_handlers(
-            google_docs=google_docs,
-            claude_client=claude_client,
-        )
-    )
+    handlers.update(make_docs_handlers(google_docs=g.docs, claude_client=claude_client))
 
     # Web search, research, bookmarks, grocery
     handlers.update(
         make_web_handlers(
             claude_client=claude_client,
-            fact_store=fact_store,
-            knowledge_store=knowledge_store,
+            fact_store=mem.fact_store,
+            knowledge_store=mem.knowledge_store,
         )
     )
 
@@ -173,12 +141,12 @@ def make_handlers(
     handlers.update(
         make_memory_handlers(
             session_manager=session_manager,
-            conv_store=conv_store,
+            conv_store=mem.conv_store,
             claude_client=claude_client,
-            goal_store=goal_store,
-            plan_store=plan_store,
-            job_store=job_store,
-            scheduler_ref=scheduler_ref,
+            goal_store=mem.goal_store,
+            plan_store=mem.plan_store,
+            job_store=sched.job_store,
+            scheduler_ref=sched.scheduler_ref,
         )
     )
 
@@ -186,29 +154,29 @@ def make_handlers(
     handlers.update(
         make_automation_handlers(
             claude_client=claude_client,
-            subagent_runner=subagent_runner,
-            memory_injector=memory_injector,
-            automation_store=automation_store,
-            job_store=job_store,
-            proactive_scheduler=proactive_scheduler,
-            scheduler_ref=scheduler_ref,
+            board_orchestrator=core.board_orchestrator,
+            memory_injector=mem.memory_injector,
+            automation_store=sched.automation_store,
+            job_store=sched.job_store,
+            proactive_scheduler=sched.proactive_scheduler,
+            scheduler_ref=sched.scheduler_ref,
         )
     )
 
     # Callback handler (inline Confirm/Cancel, suggested actions, snooze/done, run_auto, run_again)
     handlers["callback"] = make_callback_handler(
-        google_gmail=google_gmail,
-        google_calendar=google_calendar,
-        automation_store=automation_store,
-        scheduler_ref=scheduler_ref,
+        google_gmail=g.gmail,
+        google_calendar=g.calendar,
+        automation_store=sched.automation_store,
+        scheduler_ref=sched.scheduler_ref,
         claude_client=claude_client,
         tool_registry=tool_registry,
         session_manager=session_manager,
-        conv_store=conv_store,
+        conv_store=mem.conv_store,
         db=db,
-        subagent_runner=subagent_runner,
-        job_store=job_store,
-        memory_injector=memory_injector,
+        board_orchestrator=core.board_orchestrator,
+        job_store=sched.job_store,
+        memory_injector=mem.memory_injector,
         run_research_flow=handlers.get("run_research_flow"),
     )
 
@@ -217,10 +185,10 @@ def make_handlers(
         make_admin_handlers(
             db=db,
             claude_client=claude_client,
-            conversation_analyzer=conversation_analyzer,
-            job_store=job_store,
-            diagnostics_runner=diagnostics_runner,
-            scheduler_ref=scheduler_ref,
+            conversation_analyzer=core.conversation_analyzer,
+            job_store=sched.job_store,
+            diagnostics_runner=core.diagnostics_runner,
+            scheduler_ref=sched.scheduler_ref,
         )
     )
 
@@ -228,7 +196,7 @@ def make_handlers(
     handlers.update(
         make_privacy_handlers(
             session_manager=session_manager,
-            conv_store=conv_store,
+            conv_store=mem.conv_store,
             claude_client=claude_client,
             tool_registry=tool_registry,
         )
@@ -238,8 +206,8 @@ def make_handlers(
     handlers.update(
         make_reaction_handler(
             claude_client=claude_client,
-            conv_store=conv_store,
-            memory_injector=memory_injector,
+            conv_store=mem.conv_store,
+            memory_injector=mem.memory_injector,
             session_manager=session_manager,
         )
     )
@@ -248,21 +216,18 @@ def make_handlers(
     handlers.update(
         make_chat_handlers(
             session_manager=session_manager,
-            router=router,
-            conv_store=conv_store,
+            conv_store=mem.conv_store,
             claude_client=claude_client,
-            fact_extractor=fact_extractor,
-            fact_store=fact_store,
-            goal_extractor=goal_extractor,
-            goal_store=goal_store,
-            memory_injector=memory_injector,
-            voice_transcriber=voice_transcriber,
+            knowledge_extractor=mem.knowledge_extractor,
+            knowledge_store=mem.knowledge_store,
+            memory_injector=mem.memory_injector,
+            voice_transcriber=core.voice_transcriber,
             db=db,
             tool_registry=tool_registry,
-            google_gmail=google_gmail,
-            diagnostics_runner=diagnostics_runner,
-            scheduler_ref=scheduler_ref,
-            proactive_scheduler=proactive_scheduler,
+            google_gmail=g.gmail,
+            diagnostics_runner=core.diagnostics_runner,
+            scheduler_ref=sched.scheduler_ref,
+            proactive_scheduler=sched.proactive_scheduler,
         )
     )
 

@@ -26,8 +26,6 @@ from .base import (
     reject_unauthorized,
     _build_message_from_turn,
     _trim_messages_to_budget,
-    _get_working_msg,
-    MessageRotator,
     _rate_limiter,
     _task_start_times,
     _pending_writes,
@@ -44,7 +42,6 @@ from .callbacks import (
     make_suggested_actions_keyboard,
 )
 from ..session import SessionManager
-from ..streaming import stream_to_telegram
 from ...ai.claude_client import (
     AnthropicOverloadFallbackAvailable,
     StepLimitReached,
@@ -65,18 +62,14 @@ from ...diagnostics import is_diagnostics_trigger
 from ...exceptions import ServiceUnavailableError
 from ...hooks import HookEvents, hook_manager
 from ...memory.compaction import get_compaction_service
-from ...memory.facts import extract_and_store_facts
-from ...memory.goals import extract_and_store_goals
+from ...memory.knowledge import extract_and_store_knowledge
 from ...models import ConversationTurn
 from ...utils.concurrency import get_extraction_runner
 from ...utils.telegram_formatting import format_telegram_message
 
 if TYPE_CHECKING:
-    from ...ai.router import ModelRouter
     from ...ai.tools import ToolRegistry
     from ...memory.conversations import ConversationStore
-    from ...memory.facts import FactExtractor, FactStore
-    from ...memory.goals import GoalExtractor, GoalStore
     from ...memory.injector import MemoryInjector
     from ...memory.database import DatabaseManager
     from ...voice.transcriber import VoiceTranscriber
@@ -89,13 +82,10 @@ logger = logging.getLogger(__name__)
 def make_chat_handlers(
     *,
     session_manager: SessionManager,
-    router: "ModelRouter",
     conv_store: "ConversationStore",
     claude_client=None,
-    fact_extractor: "FactExtractor | None" = None,
-    fact_store: "FactStore | None" = None,
-    goal_extractor: "GoalExtractor | None" = None,
-    goal_store: "GoalStore | None" = None,
+    knowledge_extractor=None,
+    knowledge_store=None,
     memory_injector: "MemoryInjector | None" = None,
     voice_transcriber: "VoiceTranscriber | None" = None,
     db: "DatabaseManager | None" = None,
@@ -201,6 +191,7 @@ def make_chat_handlers(
         thread_id: int | None = None,
         bot=None,
         timing: RequestTiming | None = None,
+        working_message=None,
     ) -> None:
         """Tool-aware streaming path using native Anthropic function calling.
 
@@ -214,8 +205,7 @@ def make_chat_handlers(
 
         in_tool_turn = False
         last_edit_len = 0
-        rotator = MessageRotator(sent, user_id)
-        rotator_stopped = False
+        working_msg_stopped = False
 
         async def _upload_document_heartbeat() -> None:
             """Send UPLOAD_DOCUMENT every _CHAT_ACTION_INTERVAL until cancelled."""
@@ -282,7 +272,6 @@ def make_chat_handlers(
                 )
             )
 
-        rotator.start()
         from ...models import TokenUsage
         from ...analytics.call_log import log_api_call
 
@@ -337,9 +326,9 @@ def make_chat_handlers(
                             ttft_timer.stop()
                             ttft_recorded = True
 
-                        if not rotator_stopped:
-                            await rotator.stop()
-                            rotator_stopped = True
+                        if not working_msg_stopped and working_message is not None:
+                            await working_message.stop(delete=False)
+                            working_msg_stopped = True
                         if session_manager.is_cancelled(user_id):
                             shown = "".join(current_display)
                             try:
@@ -446,8 +435,8 @@ def make_chat_handlers(
                     )
                     await asyncio.sleep(1.0)
                     continue
-                if not rotator_stopped:
-                    await rotator.stop()
+                if not working_msg_stopped and working_message is not None:
+                    await working_message.stop(delete=False)
                 err_str = str(exc)
                 if "overloaded_error" in err_str or "overloaded" in err_str.lower():
                     logger.warning(
@@ -501,13 +490,19 @@ def make_chat_handlers(
                     continue
                 content = block.get("content", "")
                 if isinstance(content, list):
-                    content = " ".join(c.get("text", "") if isinstance(c, dict) else str(c) for c in content)
-                if isinstance(content, str) and content.startswith("APPROVAL_REQUIRED|"):
+                    content = " ".join(
+                        c.get("text", "") if isinstance(c, dict) else str(c)
+                        for c in content
+                    )
+                if isinstance(content, str) and content.startswith(
+                    "APPROVAL_REQUIRED|"
+                ):
                     parts = content.split("|", 2)
                     token_part = next((p for p in parts if p.startswith("token=")), "")
-                    token = token_part[len("token="):] if token_part else ""
+                    token = token_part[len("token=") :] if token_part else ""
                     if token:
                         from ..handlers.callbacks import make_bulk_email_keyboard
+
                         approval_keyboard = make_bulk_email_keyboard(token)
                         break
             if approval_keyboard is not None:
@@ -816,7 +811,16 @@ def make_chat_handlers(
                     "If relevant, offer to create a calendar event using /schedule.</hint>"
                 )
 
-            sent = await update.message.reply_text(_get_working_msg())
+            from ..working_message import WorkingMessage
+
+            wm = WorkingMessage(
+                context.bot,
+                update.effective_chat.id,
+                thread_id=thread_id,
+                animate=True,
+            )
+            await wm.start()
+            sent = wm.message
 
             await hook_manager.emit(
                 HookEvents.BEFORE_MODEL_RESOLVE,
@@ -827,114 +831,51 @@ def make_chat_handlers(
                 },
             )
 
-            if tool_registry is not None and claude_client is not None:
-                await _stream_with_tools_path(
-                    user_id=user_id,
-                    text=text,
-                    messages=messages,
-                    system_prompt=system_prompt,
-                    session_key=session_key,
-                    sent=sent,
-                    chat_id=update.effective_chat.id if update.effective_chat else None,
-                    message_id=update.message.message_id if update.message else None,
-                    thread_id=thread_id,
-                    bot=context.bot,
-                    timing=req_timing,
-                )
-                logger.debug(
-                    "Request timing for user %d: history=%dms, memory=%dms, ttft=%dms, "
-                    "tools=%dms, stream=%dms, persist=%dms, total=%dms",
-                    user_id,
-                    req_timing.history_load_ms,
-                    req_timing.memory_injection_ms,
-                    req_timing.ttft_ms,
-                    req_timing.tool_execution_ms,
-                    req_timing.streaming_ms,
-                    req_timing.persistence_ms,
-                    req_timing.total_ms(),
-                )
-                _task_start_times.pop(user_id, None)
-                extraction_runner = get_extraction_runner()
-                if fact_extractor is not None and fact_store is not None:
-                    extraction_runner.run_background(
-                        extract_and_store_facts(
-                            user_id, text, fact_extractor, fact_store
-                        )
-                    )
-                if goal_extractor is not None and goal_store is not None:
-                    extraction_runner.run_background(
-                        extract_and_store_goals(
-                            user_id, text, goal_extractor, goal_store
-                        )
-                    )
-                await hook_manager.emit(
-                    HookEvents.SESSION_END,
-                    {"user_id": user_id, "path": "tool_use", "timing": req_timing},
-                )
-                compaction_service = get_compaction_service(conv_store, claude_client)
-                if compaction_service is not None:
-                    extraction_runner.run_background(
-                        compaction_service.check_and_compact(user_id, session_key)
-                    )
-                return
-
-            rotator = MessageRotator(sent, user_id)
-            rotator.start()
-            rotator_stopped = False
-
-            async def wrapper_stream():
-                nonlocal rotator_stopped
-                async for chunk in router.stream(
-                    text, messages, user_id, system=system_prompt
-                ):
-                    if not rotator_stopped:
-                        await rotator.stop()
-                        rotator_stopped = True
-                    yield chunk
-
-            try:
-                response_text = await stream_to_telegram(
-                    chunks=wrapper_stream(),
-                    initial_message=sent,
-                    session_manager=session_manager,
-                    user_id=user_id,
-                    thread_id=thread_id,
-                )
-            except ServiceUnavailableError as e:
-                _task_start_times.pop(user_id, None)
+            if tool_registry is None or claude_client is None:
+                await wm.stop(delete=False)
                 await sent.edit_text(
-                    f"❌ Service unavailable: {e}\n\nFallback: Check /status or try again in a moment."
+                    "❌ Agent not configured — tool_registry or claude_client missing."
                 )
-                return
-            except Exception as e:
                 _task_start_times.pop(user_id, None)
-                logger.error("Error processing message for user %d: %s", user_id, e)
-                await sent.edit_text(f"❌ Sorry, something went wrong: {e}")
                 return
-            finally:
-                if not rotator_stopped:
-                    await rotator.stop()
 
-            model_name = router.last_model
-            assistant_turn = ConversationTurn(
-                role="assistant", content=response_text, model_used=model_name
+            await _stream_with_tools_path(
+                user_id=user_id,
+                text=text,
+                messages=messages,
+                system_prompt=system_prompt,
+                session_key=session_key,
+                sent=sent,
+                chat_id=update.effective_chat.id if update.effective_chat else None,
+                message_id=update.message.message_id if update.message else None,
+                thread_id=thread_id,
+                bot=context.bot,
+                timing=req_timing,
+                working_message=wm,
             )
-            await conv_store.append_turn(user_id, session_key, assistant_turn)
-
+            logger.debug(
+                "Request timing for user %d: history=%dms, memory=%dms, ttft=%dms, "
+                "tools=%dms, stream=%dms, persist=%dms, total=%dms",
+                user_id,
+                req_timing.history_load_ms,
+                req_timing.memory_injection_ms,
+                req_timing.ttft_ms,
+                req_timing.tool_execution_ms,
+                req_timing.streaming_ms,
+                req_timing.persistence_ms,
+                req_timing.total_ms(),
+            )
             _task_start_times.pop(user_id, None)
-
             extraction_runner = get_extraction_runner()
-            if fact_extractor is not None and fact_store is not None:
+            if knowledge_extractor is not None and knowledge_store is not None:
                 extraction_runner.run_background(
-                    extract_and_store_facts(user_id, text, fact_extractor, fact_store)
-                )
-            if goal_extractor is not None and goal_store is not None:
-                extraction_runner.run_background(
-                    extract_and_store_goals(user_id, text, goal_extractor, goal_store)
+                    extract_and_store_knowledge(
+                        user_id, text, knowledge_extractor, knowledge_store
+                    )
                 )
             await hook_manager.emit(
                 HookEvents.SESSION_END,
-                {"user_id": user_id, "path": "router_fallback"},
+                {"user_id": user_id, "path": "tool_use", "timing": req_timing},
             )
             compaction_service = get_compaction_service(conv_store, claude_client)
             if compaction_service is not None:
@@ -1098,34 +1039,25 @@ def make_chat_handlers(
 
             sent = await update.message.reply_text("…")
 
-            if tool_registry is not None and claude_client is not None:
-                await _stream_with_tools_path(
-                    user_id=user_id,
-                    text=user_text,
-                    messages=messages,
-                    system_prompt=system_prompt,
-                    session_key=session_key,
-                    sent=sent,
-                    chat_id=update.effective_chat.id if update.effective_chat else None,
-                    message_id=update.message.message_id if update.message else None,
-                    thread_id=thread_id,
-                    bot=context.bot,
+            if tool_registry is None or claude_client is None:
+                await sent.edit_text(
+                    "❌ Agent not configured — tool_registry or claude_client missing."
                 )
-            else:
-                try:
-                    await stream_to_telegram(
-                        chunks=router.stream(
-                            user_text, messages, user_id, system=system_prompt
-                        ),
-                        initial_message=sent,
-                        session_manager=session_manager,
-                        user_id=user_id,
-                        thread_id=thread_id,
-                    )
-                except Exception as exc:
-                    logger.error("Error processing photo for user %d: %s", user_id, exc)
-                    await sent.edit_text(f"❌ Sorry, something went wrong: {exc}")
+                _task_start_times.pop(user_id, None)
+                return
 
+            await _stream_with_tools_path(
+                user_id=user_id,
+                text=user_text,
+                messages=messages,
+                system_prompt=system_prompt,
+                session_key=session_key,
+                sent=sent,
+                chat_id=update.effective_chat.id if update.effective_chat else None,
+                message_id=update.message.message_id if update.message else None,
+                thread_id=thread_id,
+                bot=context.bot,
+            )
             _task_start_times.pop(user_id, None)
 
     ALLOWED_DOC_MIMES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
@@ -1249,36 +1181,25 @@ def make_chat_handlers(
 
             sent = await update.message.reply_text("…")
 
-            if tool_registry is not None and claude_client is not None:
-                await _stream_with_tools_path(
-                    user_id=user_id,
-                    text=user_text,
-                    messages=messages,
-                    system_prompt=system_prompt,
-                    session_key=session_key,
-                    sent=sent,
-                    chat_id=update.effective_chat.id if update.effective_chat else None,
-                    message_id=update.message.message_id if update.message else None,
-                    thread_id=thread_id,
-                    bot=context.bot,
+            if tool_registry is None or claude_client is None:
+                await sent.edit_text(
+                    "❌ Agent not configured — tool_registry or claude_client missing."
                 )
-            else:
-                try:
-                    await stream_to_telegram(
-                        chunks=router.stream(
-                            user_text, messages, user_id, system=system_prompt
-                        ),
-                        initial_message=sent,
-                        session_manager=session_manager,
-                        user_id=user_id,
-                        thread_id=thread_id,
-                    )
-                except Exception as exc:
-                    logger.error(
-                        "Error processing document for user %d: %s", user_id, exc
-                    )
-                    await sent.edit_text(f"❌ Sorry, something went wrong: {exc}")
+                _task_start_times.pop(user_id, None)
+                return
 
+            await _stream_with_tools_path(
+                user_id=user_id,
+                text=user_text,
+                messages=messages,
+                system_prompt=system_prompt,
+                session_key=session_key,
+                sent=sent,
+                chat_id=update.effective_chat.id if update.effective_chat else None,
+                message_id=update.message.message_id if update.message else None,
+                thread_id=thread_id,
+                bot=context.bot,
+            )
             _task_start_times.pop(user_id, None)
 
     return {

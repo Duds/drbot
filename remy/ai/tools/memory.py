@@ -198,39 +198,14 @@ async def exec_get_facts(registry: ToolRegistry, inp: dict, user_id: int) -> str
 async def exec_run_board(registry: ToolRegistry, inp: dict, user_id: int) -> str:
     """Convene the Board of Directors for deep analysis.
 
-    If a TaskRunner is wired (registry._task_runner), the board runs as a
-    background worker — results surface via the heartbeat after Remy frames them
-    with personal context (goals, memory, SOUL).
-
-    Falls back to inline synchronous execution if no TaskRunner is available.
+    Runs inline with full tool support. For background delivery, use the
+    /board command which invokes BackgroundTaskRunner.
     """
     topic = inp.get("topic", "").strip()
     if not topic:
         return "Board: no topic provided."
 
-    # Preferred path: async worker mediated by Remy
-    task_runner = getattr(registry, "_task_runner", None)
-    if task_runner is not None:
-        try:
-            task_id = await task_runner.spawn(
-                worker_type="board",
-                task_context={
-                    "topic": topic,
-                    "user_id": user_id,
-                    "session_key": f"board-{user_id}",
-                },
-            )
-            return (
-                f"Board analysis started on: *{topic}*\n\n"
-                f"The board is convening in the background (task `{task_id[:8]}`). "
-                "I'll surface the findings with context once they're ready."
-            )
-        except Exception as exc:
-            logger.warning(
-                "Board TaskRunner spawn failed (%s) — falling back to inline", exc
-            )
-
-    # Fallback: inline synchronous execution (no mediation)
+    # Inline execution via BoardOrchestrator
     if registry._board_orchestrator is None:
         return "Board of Directors not available."
 
