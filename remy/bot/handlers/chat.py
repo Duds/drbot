@@ -812,9 +812,12 @@ def make_chat_handlers(
 
             from ..working_message import WorkingMessage
 
+            chat = update.effective_chat
+            if chat is None:
+                return
             wm = WorkingMessage(
                 context.bot,
-                update.effective_chat.id,
+                chat.id,
                 thread_id=thread_id,
                 animate=True,
             )

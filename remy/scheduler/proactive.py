@@ -767,7 +767,7 @@ class ProactiveScheduler:
                 await self._knowledge_store.add_item(
                     user_id, "fact", fact_content, {"category": "other"}
                 )
-            else:
+            elif self._fact_store is not None:
                 await self._fact_store.add(user_id, fact_content, category="other")
             logger.info(
                 "Logged completed one-time reminder as fact for user %d: %s",
@@ -1359,7 +1359,7 @@ class ProactiveScheduler:
                         await self._knowledge_store.add_item(
                             user_id, "fact", content, {"category": category}
                         )
-                    else:
+                    elif self._fact_store is not None:
                         await self._fact_store.add(user_id, content, category)
                     facts_stored += 1
                     logger.debug("Consolidated fact: [%s] %s", category, content[:50])

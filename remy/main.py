@@ -230,7 +230,7 @@ def main() -> None:
         docs_client=google_docs,
         # Phase 5: automations
         automation_store=automation_store,
-        scheduler_ref=startup_ctx,
+        scheduler_ref=startup_ctx,  # type: ignore[arg-type]
         # Phase 6: analytics
         conversation_analyzer=conv_analyzer,
         # Phase 7 Step 2: persistent job tracking
@@ -299,7 +299,7 @@ def main() -> None:
     )
     scheduler_deps = SchedulerDeps(
         proactive_scheduler=None,  # /briefing via proxy
-        scheduler_ref=startup_ctx,
+        scheduler_ref=startup_ctx,  # type: ignore[arg-type]
         automation_store=automation_store,
         job_store=job_store,
     )

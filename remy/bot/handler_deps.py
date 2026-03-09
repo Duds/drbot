@@ -7,7 +7,7 @@ Groups related dependencies so make_handlers() takes < 8 parameters.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from ..memory.conversations import ConversationStore
@@ -31,8 +31,8 @@ if TYPE_CHECKING:
 class MemoryDeps:
     """Memory-related dependencies for handlers."""
 
-    conv_store: "ConversationStore"
-    knowledge_extractor = None
+    conv_store: "ConversationStore | None" = None
+    knowledge_extractor: Any = None
     knowledge_store: "KnowledgeStore | None" = None
     fact_store: "FactStore | None" = None
     goal_store: "GoalStore | None" = None
@@ -65,6 +65,6 @@ class CoreDeps:
     """Core handler dependencies (board, voice, analytics, diagnostics)."""
 
     board_orchestrator: "BoardOrchestrator | None" = None
-    voice_transcriber = None
+    voice_transcriber: Any = None
     conversation_analyzer: "ConversationAnalyzer | None" = None
-    diagnostics_runner = None
+    diagnostics_runner: Any = None

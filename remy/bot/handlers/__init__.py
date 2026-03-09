@@ -87,7 +87,7 @@ def make_handlers(
             session_manager=session_manager,
             tool_registry=tool_registry,
             proactive_scheduler=sched.proactive_scheduler,
-            scheduler_ref=sched.scheduler_ref,
+            scheduler_ref=sched.scheduler_ref,  # type: ignore[arg-type]
         )
     )
 
@@ -124,12 +124,12 @@ def make_handlers(
     handlers.update(
         make_memory_handlers(
             session_manager=session_manager,
-            conv_store=mem.conv_store,
+            conv_store=mem.conv_store,  # type: ignore[arg-type]
             claude_client=claude_client,
             goal_store=mem.goal_store,
             plan_store=mem.plan_store,
             job_store=sched.job_store,
-            scheduler_ref=sched.scheduler_ref,
+            scheduler_ref=sched.scheduler_ref,  # type: ignore[arg-type]
         )
     )
 
@@ -142,7 +142,7 @@ def make_handlers(
             automation_store=sched.automation_store,
             job_store=sched.job_store,
             proactive_scheduler=sched.proactive_scheduler,
-            scheduler_ref=sched.scheduler_ref,
+            scheduler_ref=sched.scheduler_ref,  # type: ignore[arg-type]
         )
     )
 
@@ -151,11 +151,11 @@ def make_handlers(
         google_gmail=g.gmail,
         google_calendar=g.calendar,
         automation_store=sched.automation_store,
-        scheduler_ref=sched.scheduler_ref,
+        scheduler_ref=sched.scheduler_ref,  # type: ignore[arg-type]
         claude_client=claude_client,
         tool_registry=tool_registry,
         session_manager=session_manager,
-        conv_store=mem.conv_store,
+        conv_store=mem.conv_store,  # type: ignore[arg-type]
         db=db,
         board_orchestrator=core.board_orchestrator,
         job_store=sched.job_store,
@@ -170,8 +170,8 @@ def make_handlers(
             claude_client=claude_client,
             conversation_analyzer=core.conversation_analyzer,
             job_store=sched.job_store,
-            diagnostics_runner=core.diagnostics_runner,
-            scheduler_ref=sched.scheduler_ref,
+            diagnostics_runner=core.diagnostics_runner,  # type: ignore[arg-type]
+            scheduler_ref=sched.scheduler_ref,  # type: ignore[arg-type]
         )
     )
 
@@ -179,7 +179,7 @@ def make_handlers(
     handlers.update(
         make_privacy_handlers(
             session_manager=session_manager,
-            conv_store=mem.conv_store,
+            conv_store=mem.conv_store,  # type: ignore[arg-type]
             claude_client=claude_client,
             tool_registry=tool_registry,
         )
@@ -189,7 +189,7 @@ def make_handlers(
     handlers.update(
         make_reaction_handler(
             claude_client=claude_client,
-            conv_store=mem.conv_store,
+            conv_store=mem.conv_store,  # type: ignore[arg-type]
             memory_injector=mem.memory_injector,
             session_manager=session_manager,
         )
@@ -199,17 +199,17 @@ def make_handlers(
     handlers.update(
         make_chat_handlers(
             session_manager=session_manager,
-            conv_store=mem.conv_store,
+            conv_store=mem.conv_store,  # type: ignore[arg-type]
             claude_client=claude_client,
             knowledge_extractor=mem.knowledge_extractor,
             knowledge_store=mem.knowledge_store,
             memory_injector=mem.memory_injector,
-            voice_transcriber=core.voice_transcriber,
+            voice_transcriber=core.voice_transcriber,  # type: ignore[arg-type]
             db=db,
             tool_registry=tool_registry,
             google_gmail=g.gmail,
-            diagnostics_runner=core.diagnostics_runner,
-            scheduler_ref=sched.scheduler_ref,
+            diagnostics_runner=core.diagnostics_runner,  # type: ignore[arg-type]
+            scheduler_ref=sched.scheduler_ref,  # type: ignore[arg-type]
             proactive_scheduler=sched.proactive_scheduler,
         )
     )

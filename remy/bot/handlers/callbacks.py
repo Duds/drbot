@@ -441,32 +441,37 @@ def make_callback_handler(
                 await query.answer("Processing…")
                 # Execute the deferred bulk action
                 action = pending["action"]
-                message_ids: list[str] = pending["message_ids"]
+                bulk_msg_ids: list[str] = pending["message_ids"]
                 add_labels: list[str] = pending.get("add_label_ids") or []
                 remove_labels: list[str] = pending.get("remove_label_ids") or []
+                msg = query.message
                 try:
                     if gmail := getattr(context.application, "_gmail_client", None):
                         if add_labels or remove_labels:
                             count = await gmail.modify_labels(
-                                message_ids,
+                                bulk_msg_ids,
                                 add_label_ids=add_labels or None,
                                 remove_label_ids=remove_labels or None,
                             )
                             label_desc = ", ".join(add_labels + remove_labels)
-                            await query.message.reply_text(
-                                f"✅ Bulk {action} complete: updated {count} email(s) (labels: {label_desc})."
-                            )
+                            if msg:
+                                await msg.reply_text(  # type: ignore[attr-defined]
+                                    f"✅ Bulk {action} complete: updated {count} email(s) (labels: {label_desc})."
+                                )
                         else:
-                            await query.message.reply_text(
-                                "⚠️ No labels specified — nothing done."
-                            )
+                            if msg:
+                                await msg.reply_text(  # type: ignore[attr-defined]
+                                    "⚠️ No labels specified — nothing done."
+                                )
                     else:
-                        await query.message.reply_text(
-                            "⚠️ Gmail not available — action cancelled."
-                        )
+                        if msg:
+                            await msg.reply_text(  # type: ignore[attr-defined]
+                                "⚠️ Gmail not available — action cancelled."
+                            )
                 except Exception as e:
                     logger.warning("Bulk email confirm execution failed: %s", e)
-                    await query.message.reply_text(f"❌ Bulk {action} failed: {e}")
+                    if msg:
+                        await msg.reply_text(f"❌ Bulk {action} failed: {e}")  # type: ignore[attr-defined]
 
         elif data.startswith("bulk_email_cancel_"):
             token = data[len("bulk_email_cancel_") :]
