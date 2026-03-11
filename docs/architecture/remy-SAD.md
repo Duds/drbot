@@ -4,7 +4,20 @@
 **Date:** 10/03/2026  
 **Status:** Internal Engineering Document  
 
-Design decisions (evaluative heartbeat, relay MCP reassessment, sub-agents, skills) are in [remy-sad-v10.md](remy-sad-v10.md). High-level summary: [HLD.md](HLD.md).  
+Design decisions (evaluative heartbeat, sub-agents, skills) are in [remy-sad-v10.md](remy-sad-v10.md). High-level summary: [HLD.md](HLD.md).
+
+---
+
+## ⛔ Do Not Rebuild
+
+The following have been tried and deliberately abandoned. Do not propose, implement, or reference them as future directions:
+
+| What | Why |
+|---|---|
+| **Relay MCP** (`relay_mcp/`, `remy/relay/`) | Inter-agent messaging via relay MCP is a dead end. Remove existing code; do not rebuild in any form. |
+| **ModelRouter / MessageClassifier** | Bypassed on the primary path; adds complexity without benefit. Removed in SDK migration. |
+| **MistralClient / MoonshotClient** | Only used by the dead router. Removed in SDK migration. |
+| **Board of Directors agent system** (pre-SDK) | Replaced by Claude Agent SDK sub-agents. Old `orchestrator.py`, `base_agent.py`, etc. are gone. |
 
 ---
 

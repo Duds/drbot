@@ -85,13 +85,9 @@ This means feature behaviour is implemented twice (command handler + tool execut
 
 These are not substantially different from each other and could be collapsed into a single parameterised template.
 
-#### (h) Relay accessed via two different pathways
+#### (h) Relay MCP — DEAD END, remove entirely
 
-The relay MCP server (`relay_mcp/server.py`) is accessed via:
-1. `remy/relay/client.py` — direct Python calls to relay functions
-2. `remy/ai/tools/relay.py` — Anthropic tool wrappers that call the same relay client
-
-Both exist, both are active, and the tool wrappers are thin pass-throughs. There is no reason for both layers.
+`relay_mcp/` and `remy/relay/` should be deleted. Inter-agent messaging via relay MCP has been tried and is a dead end. Do not unify the relay paths — remove them. Do not rebuild relay in any form.
 
 #### (i) Dead or vestigial client code
 
@@ -230,7 +226,7 @@ All proactive triggers (reminder, morning briefing, evening check-in, afternoon 
 - Proactive scheduler: morning briefing, reminders, evening check-in
 - File system tools (read, write, find, RAG index)
 - Web search and research synthesis
-- Relay MCP (multi-agent communication with cowork)
+- ~~Relay MCP~~ **DEAD END — do not rebuild.** Inter-agent messaging via relay_mcp has been tried and abandoned. Remove `remy/relay/` and `relay_mcp/` entirely.
 - Board of Directors (`BoardOrchestrator` with 5 sub-agents)
 - Voice transcription
 - Outbound message queue (crash-safe delivery)
@@ -247,6 +243,7 @@ All proactive triggers (reminder, morning briefing, evening check-in, afternoon 
 | `_late` dict | Named dataclass or initialisation order fix |
 | Duplicate command/tool pairs | Commands call tool executors; no duplicate logic |
 | `_call_claude()` in `task_orchestrator.py` | Replace with `ClaudeClient` call |
+| `remy/relay/` + `relay_mcp/` | **Delete entirely.** Relay MCP is a dead end; do not unify or rebuild. |
 
 ### 4.3 Deprecate / remove
 
