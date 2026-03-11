@@ -39,3 +39,13 @@ def isolate_env(monkeypatch, tmp_path):
     monkeypatch.setenv("TELEGRAM_ALLOWED_USERS_RAW", "12345")
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     monkeypatch.setenv("AZURE_ENVIRONMENT", "false")
+
+    # Reset the settings singleton so each test gets a fresh Settings() created
+    # with the monkeypatched env vars above. Without this, a singleton created
+    # from the real .env (e.g. TELEGRAM_ALLOWED_USERS_RAW=123456789) persists
+    # across tests and causes auth failures in handler smoke tests.
+    import remy.config
+    old_settings = remy.config._settings
+    remy.config._settings = None
+    yield
+    remy.config._settings = old_settings

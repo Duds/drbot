@@ -101,60 +101,65 @@ def test_set_and_status_project(tmp_path, monkeypatch):
 def test_read_write_ls(tmp_path):
     from unittest.mock import MagicMock, patch
 
-    session_manager = SessionManager()
-    conv_store = ConversationStore(str(tmp_path / "sessions"))
+    # All async ops must share one event loop — asyncio.Lock/Event are loop-bound
+    # and hang if used across multiple asyncio.run() calls.
+    async def _run():
+        session_manager = SessionManager()
+        conv_store = ConversationStore(str(tmp_path / "sessions"))
 
-    # Mock settings to allow tmp_path - need to patch at the module where it's used
-    mock_settings = MagicMock()
-    mock_settings.allowed_base_dirs = [str(tmp_path)]
-    mock_settings.telegram_allowed_users = [12345]
-    mock_settings.data_dir = str(tmp_path)
-    mock_settings.max_concurrent_per_user = 3
+        # Mock settings to allow tmp_path - need to patch at the module where it's used
+        mock_settings = MagicMock()
+        mock_settings.allowed_base_dirs = [str(tmp_path)]
+        mock_settings.telegram_allowed_users = [12345]
+        mock_settings.data_dir = str(tmp_path)
+        mock_settings.max_concurrent_per_user = 3
 
-    with (
-        patch("remy.bot.handlers.files.settings", mock_settings),
-        patch("remy.bot.handlers.base.settings", mock_settings),
-        patch("remy.bot.handlers.chat.settings", mock_settings),
-    ):
-        handlers = make_handlers(
-            **minimal_make_handlers_kwargs(
-                session_manager=session_manager,
-                memory_deps=MemoryDeps(conv_store=conv_store),
+        with (
+            patch("remy.bot.handlers.files.settings", mock_settings),
+            patch("remy.bot.handlers.base.settings", mock_settings),
+            patch("remy.bot.handlers.chat.settings", mock_settings),
+        ):
+            handlers = make_handlers(
+                **minimal_make_handlers_kwargs(
+                    session_manager=session_manager,
+                    memory_deps=MemoryDeps(conv_store=conv_store),
+                )
             )
-        )
-        read_cmd = handlers["read"]
-        write_cmd = handlers["write"]
-        ls_cmd = handlers["ls"]
-        find_cmd = handlers["find"]
+            read_cmd = handlers["read"]
+            write_cmd = handlers["write"]
+            ls_cmd = handlers["ls"]
+            find_cmd = handlers["find"]
 
-        # create a file
-        f = tmp_path / "allowed.txt"
-        f.write_text("hello")
-        update = make_update(12345)
-        ctx = make_context([str(f)])
-        asyncio.run(read_cmd(update, ctx))
-        assert "hello" in update.message.last_text
+            # create a file
+            f = tmp_path / "allowed.txt"
+            f.write_text("hello")
+            update = make_update(12345)
+            ctx = make_context([str(f)])
+            await read_cmd(update, ctx)
+            assert "hello" in update.message.last_text
 
-        # write command two-step
-        update2 = make_update(12345)
-        ctx2 = make_context([str(f)])
-        asyncio.run(write_cmd(update2, ctx2))
-        assert "Send me the text" in update2.message.last_text
-        # simulate the user sending the content message after /write
-        update2b = make_update(12345)
-        update2b.message.text = "newcontent"
-        # use the generic message handler to process pending write
-        asyncio.run(handlers["message"](update2b, make_context([])))
-        assert "Wrote" in update2b.message.last_text
-        # verify file was actually written
-        assert f.read_text() == "newcontent"
+            # write command two-step
+            update2 = make_update(12345)
+            ctx2 = make_context([str(f)])
+            await write_cmd(update2, ctx2)
+            assert "Send me the text" in update2.message.last_text
+            # simulate the user sending the content message after /write
+            update2b = make_update(12345)
+            update2b.message.text = "newcontent"
+            # use the generic message handler to process pending write
+            await handlers["message"](update2b, make_context([]))
+            assert "Wrote" in update2b.message.last_text
+            # verify file was actually written
+            assert f.read_text() == "newcontent"
 
-        # directory list
-        update3 = make_update(12345)
-        asyncio.run(ls_cmd(update3, make_context([str(tmp_path)])))
-        assert "allowed.txt" in update3.message.last_text
+            # directory list
+            update3 = make_update(12345)
+            await ls_cmd(update3, make_context([str(tmp_path)]))
+            assert "allowed.txt" in update3.message.last_text
 
-        # find pattern
-        update4 = make_update(12345)
-        asyncio.run(find_cmd(update4, make_context(["*.txt"])))
-        assert "allowed.txt" in update4.message.last_text
+            # find pattern
+            update4 = make_update(12345)
+            await find_cmd(update4, make_context(["*.txt"]))
+            assert "allowed.txt" in update4.message.last_text
+
+    asyncio.run(_run())
