@@ -35,7 +35,7 @@ def make_admin_handlers(
     conversation_analyzer: "ConversationAnalyzer | None" = None,
     job_store: "BackgroundJobStore | None" = None,
     diagnostics_runner: "DiagnosticsRunner | None" = None,
-    scheduler_ref: dict | None = None,
+    scheduler_ref=None,
     admin_client=None,
 ):
     """
@@ -375,7 +375,7 @@ def make_admin_handlers(
 async def _run_diagnostics(
     update: Update,
     diagnostics_runner: "DiagnosticsRunner | None" = None,
-    scheduler_ref: dict | None = None,
+    scheduler_ref=None,
 ) -> None:
     """Run comprehensive self-diagnostics and send results to user."""
     from ...diagnostics import format_diagnostics_output

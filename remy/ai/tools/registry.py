@@ -48,10 +48,6 @@ class ToolRegistry:
         return self._ctx.knowledge_extractor
 
     @property
-    def _board_orchestrator(self):
-        return self._ctx.board_orchestrator
-
-    @property
     def _claude_client(self):
         return self._ctx.claude_client
 
@@ -92,8 +88,8 @@ class ToolRegistry:
         return self._ctx.automation_store
 
     @property
-    def _scheduler_ref(self) -> dict:
-        return self._ctx.scheduler_ref or {}
+    def _scheduler_ref(self):
+        return self._ctx.scheduler_ref
 
     @property
     def _conversation_analyzer(self):
@@ -138,8 +134,11 @@ class ToolRegistry:
 
     @property
     def _proactive_scheduler(self):
-        """Return the proactive scheduler from the scheduler_ref dict."""
-        return self._scheduler_ref.get("proactive_scheduler")
+        """Return the proactive scheduler from the scheduler_ref."""
+        ref = self._scheduler_ref
+        if ref is None:
+            return None
+        return ref.get("proactive_scheduler")
 
     async def dispatch(
         self,

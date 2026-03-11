@@ -7,19 +7,18 @@ Supports dict-like .get() for scheduler_ref compatibility.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
 
 
 @dataclass
 class StartupContext:
     """Late-bound startup dependencies. Supports dict-like .get() for scheduler_ref compatibility."""
 
-    proactive_scheduler = None
-    diagnostics_runner = None
-    bot = None
-    outbound_queue: object = (
-        None  # Injected at construction; late-bound items use default None
-    )
+    outbound_queue: Any = None
+    proactive_scheduler: Any = None
+    diagnostics_runner: Any = None
+    bot: Any = None
 
     def get(self, key: str, default=None):
         return getattr(self, key, default)

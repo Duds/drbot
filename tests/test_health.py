@@ -8,7 +8,7 @@ import os
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from remy.health import HealthContext, run_health_server, set_ready
+from remy.health import HealthContext, run_health_server
 from remy.health.routes import commands, dashboard, diagnostics, files, incoming
 from remy.health.routes.core import handle_health, handle_ready, handle_root
 from remy.health.utils import check_token

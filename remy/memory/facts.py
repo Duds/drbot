@@ -11,6 +11,7 @@ import logging
 from typing import Any
 
 from ..ai.claude_client import ClaudeClient
+from ..ai.json_utils import strip_code_fences
 from ..config import settings
 from ..models import Fact
 from .database import DatabaseManager
@@ -49,12 +50,7 @@ class FactExtractor:
                 model=settings.model_simple,
                 max_tokens=512,
             )
-            # Strip markdown code fences if Claude wraps the JSON
-            cleaned = raw.strip()
-            if cleaned.startswith("```"):
-                cleaned = cleaned.split("\n", 1)[-1]  # drop opening fence line
-                cleaned = cleaned.rsplit("```", 1)[0]  # drop closing fence
-            data = json.loads(cleaned.strip())
+            data = json.loads(strip_code_fences(raw))
             if not isinstance(data, list):
                 return []
             facts = []

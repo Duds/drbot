@@ -24,7 +24,6 @@ if TYPE_CHECKING:
     from ..google.gmail import GmailClient
     from ..google.docs import DocsClient
     from ..google.contacts import ContactsClient
-    from ..agents.orchestrator import BoardOrchestrator
     from ..analytics.analyzer import ConversationAnalyzer
 
 
@@ -56,7 +55,7 @@ class SchedulerDeps:
     """Scheduler and automation dependencies for handlers."""
 
     proactive_scheduler: "ProactiveScheduler | None" = None
-    scheduler_ref: dict | None = None
+    scheduler_ref: Any = None
     automation_store: "AutomationStore | None" = None
     job_store: "BackgroundJobStore | None" = None
     agent_task_store: "AgentTaskStore | None" = None
@@ -64,9 +63,8 @@ class SchedulerDeps:
 
 @dataclass(frozen=False)
 class CoreDeps:
-    """Core handler dependencies (board, voice, analytics, diagnostics)."""
+    """Core handler dependencies (voice, analytics, diagnostics)."""
 
-    board_orchestrator: "BoardOrchestrator | None" = None
     voice_transcriber: Any = None
     conversation_analyzer: "ConversationAnalyzer | None" = None
     diagnostics_runner: Any = None

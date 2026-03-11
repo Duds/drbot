@@ -61,7 +61,6 @@ async def build_tui_deps() -> TUIDeps:
     from ..memory.background_jobs import BackgroundJobStore
     from ..memory.plans import PlanStore
     from ..analytics.analyzer import ConversationAnalyzer
-    from ..agents.orchestrator import BoardOrchestrator
     from ..ai.tools import ToolRegistry
     from ..ai.tools.context import ToolContext
     from ..memory.injector import MemoryInjector
@@ -118,7 +117,6 @@ async def build_tui_deps() -> TUIDeps:
 
     outbound_queue = OutboundQueue(db_path=db.db_path, bot=None)
     startup_ctx = StartupContext(outbound_queue=outbound_queue)
-    board_orchestrator = BoardOrchestrator(claude_client)
 
     from ..ai.mistral_client import MistralClient
     from ..ai.moonshot_client import MoonshotClient
@@ -130,7 +128,6 @@ async def build_tui_deps() -> TUIDeps:
         logs_dir=settings.logs_dir,
         knowledge_store=knowledge_store,
         knowledge_extractor=knowledge_extractor,
-        board_orchestrator=board_orchestrator,
         claude_client=claude_client,
         mistral_client=mistral_client,
         moonshot_client=moonshot_client,
@@ -141,7 +138,7 @@ async def build_tui_deps() -> TUIDeps:
         contacts_client=None,
         docs_client=None,
         automation_store=automation_store,
-        scheduler_ref=startup_ctx,  # type: ignore[arg-type]
+        scheduler_ref=startup_ctx,
         conversation_analyzer=conv_analyzer,
         job_store=job_store,
         plan_store=plan_store,

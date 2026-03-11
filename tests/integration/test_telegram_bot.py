@@ -75,6 +75,7 @@ def sample_handlers():
         "unschedule": AsyncMock(),
         "stats": AsyncMock(),
         "costs": AsyncMock(),
+        "routing": AsyncMock(),
         "goal_status": AsyncMock(),
         "retrospective": AsyncMock(),
         "jobs": AsyncMock(),
@@ -123,7 +124,7 @@ class TestTelegramBot:
             assert mock_builder.read_timeout.called
 
     def test_phase3_commands_registered(self, mock_settings, sample_handlers):
-        """Phase 3: Assert exactly 13 collapsed commands are registered."""
+        """Phase 3: Assert collapsed commands are registered."""
         PHASE3_COMMANDS = {
             "start",
             "help",
@@ -137,6 +138,7 @@ class TestTelegramBot:
             "logs",
             "stats",
             "costs",
+            "routing",
             "diagnostics",
         }
         with patch("remy.bot.telegram_bot.Application") as mock_app:
@@ -170,7 +172,7 @@ class TestTelegramBot:
                 next(iter(c[0][0].commands)) for c in command_handler_calls
             }
             assert registered_commands == PHASE3_COMMANDS
-            assert len(command_handler_calls) == 13
+            assert len(command_handler_calls) == 14
 
     def test_handlers_registered(self, mock_settings, sample_handlers):
         """Verify all handlers are registered with the application."""

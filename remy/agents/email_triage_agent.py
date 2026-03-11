@@ -12,6 +12,8 @@ import json
 import logging
 from typing import TYPE_CHECKING
 
+from ..ai.json_utils import strip_code_fences
+
 if TYPE_CHECKING:
     from ..google.gmail import GmailClient
     from ..memory.database import DatabaseManager
@@ -188,11 +190,8 @@ Return JSON only, e.g. {{"msg_id_1": ["Label_123"], "msg_id_2": ["unknown"]}}.""
         logger.warning("Claude complete failed in triage classify: %s", e)
         return {item["id"]: ["unknown"] for item in batch}
 
-    cleaned = raw.strip()
-    if cleaned.startswith("```"):
-        cleaned = cleaned.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
     try:
-        data = json.loads(cleaned)
+        data = json.loads(strip_code_fences(raw))
         if not isinstance(data, dict):
             return {e["id"]: ["unknown"] for e in batch}
         out = {}

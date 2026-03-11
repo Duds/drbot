@@ -30,7 +30,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import warnings
 
 from .context import HealthContext
 from .routes import commands, dashboard, diagnostics, files, incoming, metrics, sms_wallet, webhooks
@@ -38,28 +37,6 @@ from .routes.core import handle_health, handle_ready, handle_root
 from .utils import get_start_time
 
 logger = logging.getLogger(__name__)
-
-# Stored context for run_health_server (used by bound handlers)
-_ctx: HealthContext | None = None
-
-
-def set_ready() -> None:
-    """Call this once the database and scheduler are initialised.
-
-    Deprecated: Prefer calling ctx.set_ready() on the HealthContext
-    passed to run_health_server.
-    """
-    global _ctx
-    if _ctx is not None:
-        _ctx.set_ready()
-        logger.info("Health server: marked ready")
-    else:
-        warnings.warn(
-            "set_ready() called but no HealthContext was passed to run_health_server. "
-            "Pass ctx to run_health_server and call ctx.set_ready() instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
 
 
 async def run_health_server(
@@ -74,7 +51,6 @@ async def run_health_server(
         ctx: HealthContext with dependencies. If None, uses empty context
              (endpoints that need deps will return 503).
     """
-    global _ctx
     _ctx = ctx or HealthContext()
 
     try:
@@ -139,5 +115,4 @@ async def run_health_server(
 __all__ = [
     "HealthContext",
     "run_health_server",
-    "set_ready",
 ]
