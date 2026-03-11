@@ -6,7 +6,9 @@ Archived on 2026-03-10. **63** completed user stories (including context-aware r
 
 **Recently archived (2026-03-10):** US-analytics-moonshot-balance, US-research-alternative, US-budget-enforcement, US-mac-file-links-secure-download, US-persistent-job-tracking.
 
-**Recently archived (2026-03-11):** US-refactor-tool-registry-package (verified done — package already in place), US-agent-creator, US-para-memory, US-email-triage-subagent.
+**Recently archived (2026-03-11):** US-refactor-tool-registry-package (verified done — package already in place), US-agent-creator, US-para-memory, US-email-triage-subagent; US-telegram-message-threading, US-soul-compression, US-suppress-inter-tool-text-chunks.
+
+**Recently archived (2026-03-11):** US-analytics-routing-breakdown, US-analytics-anthropic-admin-api, US-python-code-execution (Phase B), US-multi-agent-architecture.
 
 **Out of scope — relay removed (2026-03-11):** US-blocked-task-dedup, US-heartbeat-protocol, US-auto-requeue-tasks. These PBIs assume relay (cowork ↔ Remy); relay was explicitly removed from the solution.
 
