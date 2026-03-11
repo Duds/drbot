@@ -5,7 +5,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from remy.bot.working_message import WorkingMessage, _PHRASES, _EDIT_INTERVAL
+from remy.bot.working_message import (
+    WORKING_PLACEHOLDER,
+    WorkingMessage,
+    _EDIT_INTERVAL,
+    _PHRASES,
+    tool_status_text,
+)
 
 
 def make_mock_bot():
@@ -21,14 +27,17 @@ def make_mock_bot():
 
 @pytest.mark.asyncio
 async def test_start_sends_initial_placeholder():
-    """start() should send an initial '⚙️ …' message."""
+    """start() should send WORKING_PLACEHOLDER (_Working…_) by default."""
     bot = make_mock_bot()
     wm = WorkingMessage(bot, chat_id=999)
 
     await wm.start()
     await wm.stop()
 
-    bot.send_message.assert_called_once_with(999, "⚙️ …", message_thread_id=None)
+    bot.send_message.assert_called_once()
+    call_kw = bot.send_message.call_args[1]
+    assert call_kw.get("parse_mode") == "Markdown"
+    assert bot.send_message.call_args[0][1] == WORKING_PLACEHOLDER
 
 
 @pytest.mark.asyncio
@@ -40,7 +49,9 @@ async def test_start_with_thread_id():
     await wm.start()
     await wm.stop()
 
-    bot.send_message.assert_called_once_with(999, "⚙️ …", message_thread_id=42)
+    bot.send_message.assert_called_once()
+    assert bot.send_message.call_args[1]["message_thread_id"] == 42
+    assert bot.send_message.call_args[0][1] == WORKING_PLACEHOLDER
 
 
 @pytest.mark.asyncio
@@ -195,3 +206,61 @@ async def test_edit_to_result():
     assert last_call[0][0] == "Done"
     await wm.stop(delete=False)
     bot.delete_message.assert_not_called()
+
+
+def test_tool_status_text():
+    """US-working-message-normalisation: tool_status_text returns standard format."""
+    assert "calendar" in tool_status_text("calendar")
+    assert "⚙️" in tool_status_text("calendar")
+    assert tool_status_text("gmail") == "_⚙️ Using gmail…_"
+
+
+@pytest.mark.asyncio
+async def test_set_status_updates_placeholder():
+    """set_status edits the message to tool indicator; no crash."""
+    bot = make_mock_bot()
+    wm = WorkingMessage(bot, chat_id=999)
+    await wm.start()
+    await wm.set_status(tool_status_text("calendar"))
+    bot.edit_message_text.assert_called()
+    assert "calendar" in bot.edit_message_text.call_args[0][0]
+    await wm.stop()
+
+
+@pytest.mark.asyncio
+async def test_set_status_bad_request_does_not_crash():
+    """User deleted placeholder: set_status catches BadRequest and does not raise."""
+    from telegram.error import BadRequest
+
+    bot = make_mock_bot()
+    bot.edit_message_text = AsyncMock(
+        side_effect=BadRequest("Message to edit not found")
+    )
+    wm = WorkingMessage(bot, chat_id=999)
+    await wm.start()
+    await wm.set_status(tool_status_text("calendar"))  # should not raise
+    await wm.stop()
+
+
+@pytest.mark.asyncio
+async def test_mark_replaced_prevents_delete_on_exit():
+    """mark_replaced() causes __aexit__ to not delete the message."""
+    bot = make_mock_bot()
+    async with WorkingMessage(bot, chat_id=999) as wm:
+        wm.mark_replaced()
+    bot.delete_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_edit_to_result_bad_request_does_not_crash():
+    """edit_to_result catches BadRequest (e.g. message deleted) and does not raise."""
+    from telegram.error import BadRequest
+
+    bot = make_mock_bot()
+    bot.edit_message_text = AsyncMock(
+        side_effect=BadRequest("Message to edit not found")
+    )
+    wm = WorkingMessage(bot, chat_id=999)
+    await wm.start()
+    await wm.edit_to_result("Done")  # should not raise
+    await wm.stop()

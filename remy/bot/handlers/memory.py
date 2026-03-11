@@ -32,6 +32,7 @@ def make_memory_handlers(
     conv_store: "ConversationStore",
     claude_client=None,
     goal_store: "GoalStore | None" = None,
+    knowledge_store=None,
     plan_store: "PlanStore | None" = None,
     job_store: "BackgroundJobStore | None" = None,
     scheduler_ref=None,
@@ -48,11 +49,14 @@ def make_memory_handlers(
             return
         if await reject_unauthorized(update):
             return
-        if goal_store is None:
+        if knowledge_store is None and goal_store is None:
             await update.message.reply_text("Memory not available.")
             return
         user_id = update.effective_user.id
-        goals = await goal_store.get_active(user_id, limit=15)
+        if knowledge_store is not None:
+            goals = await knowledge_store.get_goals_active(user_id, limit=15)
+        else:
+            goals = await goal_store.get_active(user_id, limit=15)
         if not goals:
             await update.message.reply_text(
                 "You have no active goals yet. Tell me what you're working on!"

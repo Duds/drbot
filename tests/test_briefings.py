@@ -445,6 +445,64 @@ class TestEveningCheckinPromptWithCounters:
         assert "7" in prompt
 
 
+class TestBuildProactiveSystemPrompt:
+    """US-proactive-prompt-consolidation: single build_proactive_system_prompt for all scenarios."""
+
+    def test_reminder_scenario(self):
+        from remy.bot.pipeline import build_proactive_system_prompt
+
+        prompt = build_proactive_system_prompt(
+            "reminder", context=None, label="test label"
+        )
+        assert "REMINDER TRIGGER" in prompt
+        assert "test label" in prompt
+        assert len(prompt) > 100
+
+    def test_briefing_scenario(self):
+        from remy.bot.pipeline import build_proactive_system_prompt
+
+        prompt = build_proactive_system_prompt("briefing", context={"goals": []})
+        assert "MORNING BRIEFING" in prompt
+        assert "goals" in prompt
+
+    def test_evening_checkin_scenario(self):
+        from remy.bot.pipeline import build_proactive_system_prompt
+
+        prompt = build_proactive_system_prompt(
+            "evening_checkin", context={"evening_checkin": True, "stale_goals": []}
+        )
+        assert "EVENING CHECK-IN" in prompt
+
+    def test_afternoon_checkin_scenario(self):
+        from remy.bot.pipeline import build_proactive_system_prompt
+
+        prompt = build_proactive_system_prompt(
+            "afternoon_checkin", context={"afternoon_checkin": True}
+        )
+        assert "AFTERNOON FOCUS" in prompt
+
+    def test_afternoon_check_scenario(self):
+        from remy.bot.pipeline import build_proactive_system_prompt
+
+        prompt = build_proactive_system_prompt(
+            "afternoon_check", context={"afternoon_check": True, "goals": []}
+        )
+        assert "AFTERNOON CHECK-IN" in prompt or "afternoon" in prompt.lower()
+
+    def test_context_none_does_not_crash(self):
+        from remy.bot.pipeline import build_proactive_system_prompt
+
+        prompt = build_proactive_system_prompt("briefing", context=None)
+        assert prompt
+        assert "MORNING BRIEFING" in prompt
+
+    def test_unknown_scenario_falls_back_to_briefing(self):
+        from remy.bot.pipeline import build_proactive_system_prompt
+
+        prompt = build_proactive_system_prompt("unknown_scenario", context={})
+        assert "MORNING BRIEFING" in prompt
+
+
 class TestMonthlyRetrospectiveGenerator:
     """Tests for MonthlyRetrospectiveGenerator."""
 

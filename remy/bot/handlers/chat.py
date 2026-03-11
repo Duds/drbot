@@ -71,6 +71,7 @@ from ...utils.telegram_formatting import (
     format_telegram_message,
     is_entity_parse_error,
 )
+from ..working_message import tool_status_text
 
 if TYPE_CHECKING:
     from ...ai.tools import ToolRegistry
@@ -432,9 +433,11 @@ def make_chat_handlers(
                             )
                             try:
                                 await sent.edit_text(
-                                    f"_⚙️ Using {event.tool_name}…_",
+                                    tool_status_text(event.tool_name),
                                     parse_mode="Markdown",
                                 )
+                            except BadRequest:
+                                pass  # e.g. message deleted by user
                             except Exception as e:
                                 logger.debug(
                                     "Failed to update tool status message: %s", e
@@ -566,7 +569,9 @@ def make_chat_handlers(
                     token_part = next((p for p in parts if p.startswith("token=")), "")
                     type_part = next((p for p in parts if p.startswith("type=")), "")
                     token = token_part[len("token=") :] if token_part else ""
-                    approval_type = type_part[len("type=") :] if type_part else "bulk_email"
+                    approval_type = (
+                        type_part[len("type=") :] if type_part else "bulk_email"
+                    )
                     if token:
                         from ..handlers.callbacks import (
                             make_bulk_email_keyboard,
@@ -1242,7 +1247,12 @@ def make_chat_handlers(
         user_text = caption if caption else "What is this image?"
         filename = doc.file_name or "image"
         attachment_token = store_pending_attachment(
-            doc.file_id, False, caption, user_id, doc.mime_type or "image/jpeg", filename
+            doc.file_id,
+            False,
+            caption,
+            user_id,
+            doc.mime_type or "image/jpeg",
+            filename,
         )
 
         try:

@@ -54,7 +54,11 @@ _pending_attachments: dict[str, dict] = {}
 
 def _clean_stale_attachments() -> None:
     now = time.time()
-    stale = [t for t, v in _pending_attachments.items() if now - v["created_at"] > _ATTACH_TTL]
+    stale = [
+        t
+        for t, v in _pending_attachments.items()
+        if now - v["created_at"] > _ATTACH_TTL
+    ]
     for t in stale:
         del _pending_attachments[t]
 
@@ -87,8 +91,12 @@ def make_attachment_keyboard(token: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [
-                InlineKeyboardButton("Summarise", callback_data=f"attach_act:s:{token}"),
-                InlineKeyboardButton("Extract tasks", callback_data=f"attach_act:e:{token}"),
+                InlineKeyboardButton(
+                    "Summarise", callback_data=f"attach_act:s:{token}"
+                ),
+                InlineKeyboardButton(
+                    "Extract tasks", callback_data=f"attach_act:e:{token}"
+                ),
                 InlineKeyboardButton("Save", callback_data=f"attach_act:v:{token}"),
             ],
         ]
@@ -138,11 +146,15 @@ def make_archive_keyboard(token: str) -> InlineKeyboardMarkup:
 # Thresholds from config (defaults: delete 5, label 10)
 def _gmail_delete_threshold() -> int:
     from ...config import settings
+
     return settings.approval_gmail_delete_threshold
+
 
 def _gmail_label_threshold() -> int:
     from ...config import settings
+
     return settings.approval_gmail_label_threshold
+
 
 # Pending bulk email actions: token -> {user_id, action, message_ids, label_ids, created_at}
 _pending_bulk_email: dict[str, dict] = {}
@@ -513,10 +525,16 @@ def make_callback_handler(
         if data.startswith("attach_act:"):
             await query.answer()
             parts = data.split(":", 2)
-            if len(parts) != 3 or parts[0] != "attach_act" or run_attachment_vision is None:
+            if (
+                len(parts) != 3
+                or parts[0] != "attach_act"
+                or run_attachment_vision is None
+            ):
                 if len(parts) == 3 and parts[0] == "attach_act":
                     try:
-                        await query.edit_message_text("Attachment action not available.")
+                        await query.edit_message_text(
+                            "Attachment action not available."
+                        )
                     except Exception:
                         pass
                 return
@@ -876,6 +894,91 @@ def make_callback_handler(
                     await query.edit_message_text(f"❌ Snooze failed: {e}")
                 except Exception:
                     pass
+
+        elif data.startswith("pa:"):
+            # US-proactive-button-consistency: unified proactive keyboard (Done, Snooze 1h/4h)
+            from ..proactive_keyboard import parse_proactive_callback
+
+            parsed = parse_proactive_callback(data)
+            if parsed is None:
+                await query.answer()
+                return
+            code, ctx_id = parsed
+            _clean_stale_reminders()
+            # Reminder token is 12 hex chars; "b:" prefix = briefing/check-in dismiss
+            is_reminder_token = len(ctx_id) == 12 and all(
+                c in "0123456789abcdef" for c in ctx_id
+            )
+            if code == "D":  # DISMISS
+                if is_reminder_token:
+                    pending = _pending_reminders.pop(ctx_id, None)
+                    if pending is None or pending["user_id"] != user_id:
+                        await query.answer("Expired.", show_alert=True)
+                        return
+                    automation_id = pending.get("automation_id") or 0
+                    if (
+                        not pending.get("one_time")
+                        and automation_id
+                        and automation_store
+                    ):
+                        try:
+                            await automation_store.update_last_run(automation_id)
+                        except Exception as e:
+                            logger.debug("update_last_run failed: %s", e)
+                    try:
+                        await query.edit_message_text("Done ✓")
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        await query.edit_message_reply_markup(reply_markup=None)
+                    except Exception as e:
+                        logger.debug("Edit reply_markup failed: %s", e)
+                await query.answer()
+                return
+            if code in ("S1", "S4") and is_reminder_token:
+                minutes = 60 if code == "S1" else 240
+                pending = _pending_reminders.pop(ctx_id, None)
+                if pending is None or pending["user_id"] != user_id:
+                    await query.answer("Expired.", show_alert=True)
+                    return
+                label = pending["label"]
+                user_id_p = pending["user_id"]
+                if automation_store is None or scheduler_ref is None:
+                    try:
+                        await query.edit_message_text("❌ Snooze not available.")
+                    except Exception:
+                        pass
+                    await query.answer()
+                    return
+                tz = ZoneInfo(settings.scheduler_timezone)
+                fire_at = datetime.now(tz) + timedelta(minutes=minutes)
+                fire_at_str = fire_at.isoformat()
+                next_at = fire_at.strftime("%H:%M")
+                try:
+                    new_id = await automation_store.add(
+                        user_id_p, label, cron="", fire_at=fire_at_str
+                    )
+                    sched = scheduler_ref.get("proactive_scheduler")
+                    if sched is not None:
+                        sched.add_automation(
+                            new_id, user_id_p, label, "", fire_at=fire_at_str
+                        )
+                    try:
+                        await query.edit_message_text(
+                            f"Snoozed — next reminder at {next_at}."
+                        )
+                    except Exception:
+                        pass
+                except Exception as e:
+                    logger.exception("Snooze failed: %s", e)
+                    try:
+                        await query.edit_message_text(f"❌ Snooze failed: {e}")
+                    except Exception:
+                        pass
+                await query.answer()
+                return
+            await query.answer()
 
         elif data.startswith("done_"):
             token = data[len("done_") :]

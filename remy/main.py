@@ -136,6 +136,7 @@ def main() -> None:
     wallet_store = None
     if getattr(settings, "sms_webhook_secret", "").strip():
         from .integrations import SMSStore, WalletStore
+
         sms_store = SMSStore(db)
         wallet_store = WalletStore(db)
     plan_store = PlanStore(db)
@@ -164,9 +165,9 @@ def main() -> None:
     # Initialise voice transcriber (lazy — Whisper model loads on first voice message)
     voice_transcriber = VoiceTranscriber()
 
-    # Google Workspace clients (Phase 3).
+    # Google Workspace clients (US-lazy-service-init: created on first use).
     # Auth: ADC (gcloud auth application-default login) takes priority over token file.
-    # Setup: see scripts/setup_google_auth.py or GCLOUD_ADC_COMMAND in remy/google/auth.py.
+    lazy_google = None
     google_calendar = None
     google_gmail = None
     google_docs = None
@@ -176,19 +177,13 @@ def main() -> None:
 
         token_file = settings.google_token_file
         if is_configured(token_file):
-            from .google.calendar import CalendarClient
-            from .google.gmail import GmailClient
-            from .google.docs import DocsClient
-            from .google.contacts import ContactsClient
+            from .google.lazy_clients import LazyGoogleClients
 
-            google_calendar = CalendarClient(
+            lazy_google = LazyGoogleClients(
                 token_file, timezone=settings.scheduler_timezone
             )
-            google_gmail = GmailClient(token_file)
-            google_docs = DocsClient(token_file)
-            google_contacts = ContactsClient(token_file)
             logger.info(
-                "Google Workspace integration enabled (Calendar, Gmail, Docs, Contacts)"
+                "Google Workspace integration enabled (lazy init: Calendar, Gmail, Docs, Contacts)"
             )
         else:
             logger.info(
@@ -211,6 +206,8 @@ def main() -> None:
     # Google Workspace clients may be None if not configured; tools degrade gracefully.
     from .ai.tools.context import ToolContext
 
+    # US-knowledge-store-migration: all tool memory writes/reads go through knowledge_store
+    # US-lazy-service-init: pass lazy_google so tools resolve clients on first use
     tool_ctx = ToolContext(
         logs_dir=settings.logs_dir,
         knowledge_store=knowledge_store,
@@ -230,11 +227,12 @@ def main() -> None:
         job_store=job_store,
         plan_store=plan_store,
         file_indexer=file_indexer,
-        fact_store=fact_store,
-        goal_store=goal_store,
+        fact_store=None,
+        goal_store=None,
         counter_store=counter_store,
         sms_store=sms_store,
         wallet_store=wallet_store,
+        lazy_google=lazy_google,
     )
     tool_registry = ToolRegistry(tool_ctx)
 
@@ -286,11 +284,15 @@ def main() -> None:
         memory_injector=memory_injector,
         plan_store=plan_store,
     )
-    google_deps = GoogleDeps(
-        calendar=google_calendar,
-        gmail=google_gmail,
-        docs=google_docs,
-        contacts=google_contacts,
+    google_deps = (
+        GoogleDeps(lazy_google=lazy_google)
+        if lazy_google is not None
+        else GoogleDeps(
+            calendar=google_calendar,
+            gmail=google_gmail,
+            docs=google_docs,
+            contacts=google_contacts,
+        )
     )
     scheduler_deps = SchedulerDeps(
         proactive_scheduler=None,  # /briefing via proxy
@@ -342,6 +344,9 @@ def main() -> None:
     asyncio.set_event_loop(loop)
 
     async def _on_post_init(app):
+        # US-lazy-service-init: log ready before any lazy services load
+        logger.info("remy ready")
+
         # Start health HTTP server immediately so the container is reachable
         # during the /ready 503 "starting" phase
         health_port = int(os.environ.get("HEALTH_PORT", "8080"))
@@ -364,11 +369,13 @@ def main() -> None:
         outbound_queue.start_processor()
 
         # Evaluative heartbeat handler (SAD v7) — uses queue for delivery
+        # Resolve Google clients from deps (lazy init on first access)
         heartbeat_handler = HeartbeatHandler(
             goal_store=goal_store,
+            knowledge_store=knowledge_store,
             plan_store=plan_store,
-            calendar_client=google_calendar,
-            gmail_client=google_gmail,
+            calendar_client=google_deps.calendar,
+            gmail_client=google_deps.gmail,
             automation_store=automation_store,
             counter_store=counter_store,
             claude_client=claude_client,
@@ -382,9 +389,9 @@ def main() -> None:
             app.bot,
             goal_store,
             fact_store=fact_store,
-            calendar_client=google_calendar,
-            contacts_client=google_contacts,
-            gmail_client=google_gmail,
+            calendar_client=google_deps.calendar,
+            contacts_client=google_deps.contacts,
+            gmail_client=google_deps.gmail,
             knowledge_store=knowledge_store,
             automation_store=automation_store,
             claude_client=claude_client,
@@ -412,26 +419,7 @@ def main() -> None:
         # Fire any daily jobs missed while the bot was down (Bug 33)
         await sched.run_startup_reconciliation()
 
-        # Trigger initial file index if the index is empty (background task)
-        if file_indexer.enabled:
-
-            async def _initial_index():
-                try:
-                    status = await file_indexer.get_status()
-                    if status.files_indexed == 0:
-                        logger.info(
-                            "File index is empty — running initial index in background"
-                        )
-                        stats = await file_indexer.run_incremental()
-                        logger.info(
-                            "Initial file index complete: %d files, %d chunks",
-                            stats.get("files_indexed", 0),
-                            stats.get("chunks_created", 0),
-                        )
-                except Exception as e:
-                    logger.warning("Initial file index failed: %s", e)
-
-            asyncio.create_task(_initial_index())
+        # US-lazy-service-init: initial file index deferred to first file-tool use
 
         asyncio.create_task(health_monitor(claude_client, app.bot))
 
@@ -456,26 +444,21 @@ def main() -> None:
             primary_chat_id = _get_primary_chat_id()
             if primary_chat_id is not None:
                 from .integrations import WalletHandler
+
                 health_ctx.sms_store = sms_store
                 health_ctx.sms_wallet_bot = app.bot
                 health_ctx.sms_wallet_chat_id = primary_chat_id
-                health_ctx.wallet_handler = WalletHandler(wallet_store, app.bot, primary_chat_id)
+                health_ctx.wallet_handler = WalletHandler(
+                    wallet_store, app.bot, primary_chat_id
+                )
 
-        # Pre-warm embedding model to avoid cold-start timeout in diagnostics.
-        # Model load can take 15-30s; doing it here ensures /diagnostics won't time out.
-        try:
-            logger.info("Pre-warming embedding model...")
-            await embeddings.embed("warmup")
-            logger.info("Embedding model ready")
-        except Exception as e:
-            logger.warning("Embedding model pre-warm failed: %s", e)
+        # US-lazy-service-init: embedding model loads on first use (no pre-warm here)
 
         # Signal readiness — /ready now returns 200
         health_ctx.set_ready()
 
     bot.application.post_init = _on_post_init
 
-    logger.info("remy ready")
     bot.run()
 
 

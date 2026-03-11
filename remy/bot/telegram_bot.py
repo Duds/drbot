@@ -25,22 +25,61 @@ from ..config import settings
 
 logger = logging.getLogger(__name__)
 
-# Phase 3 collapsed commands — shown in Telegram "/" menu
+# Removed commands: reply with redirect to natural language (US-command-surface-reduction)
+_REDIRECT_MESSAGES: dict[str, str] = {
+    "calendar": "Use natural language — just ask me about your calendar directly.",
+    "goals": "Just ask me in natural language, e.g. “What are my goals?” or “Add a goal”.",
+    "plans": "Just ask me about plans in natural language.",
+    "gmail_unread": "Ask me in natural language, e.g. “What’s in my inbox?”.",
+    "contacts": "Ask me about contacts in natural language.",
+    "search": "Just ask me what you want to find.",
+    "bookmarks": "Ask me about bookmarks in natural language.",
+    "research": "Ask me to research a topic in natural language.",
+    "reminders": "Ask me about reminders or set one in natural language.",
+    "read": "Ask me to read a file by describing the path or file.",
+    "write": "Ask me to write to a file in natural language.",
+    "ls": "Ask me to list files or directories in natural language.",
+    "find": "Ask me to find files or content in natural language.",
+    "routing": "Routing stats are available via /diagnostics. For custom analysis, ask in natural language.",
+}
+
+
+def _make_redirect_handler(cmd: str):
+    """Return a handler that replies with the redirect message for a removed command."""
+
+    async def _redirect(update, context):
+        if update.message is None:
+            return
+        msg = _REDIRECT_MESSAGES.get(
+            cmd, "That command is no longer available. Just ask me in natural language."
+        )
+        await update.message.reply_text(msg)
+
+    return _redirect
+
+
+def _register_redirect_handlers(application) -> None:
+    """Register CommandHandlers for removed commands so they return a redirect message."""
+    for cmd in _REDIRECT_MESSAGES:
+        # Telegram allows only a-z, 0-9, underscore; use cmd as slash name (e.g. /gmail_unread)
+        application.add_handler(CommandHandler(cmd, _make_redirect_handler(cmd)))
+
+
+# US-command-surface-reduction: ≤15 commands in BotFather menu
 PHASE3_BOT_COMMANDS = [
     BotCommand("start", "Show overview"),
     BotCommand("help", "Show overview"),
     BotCommand("cancel", "Stop current task"),
-    BotCommand("status", "Backend health"),
-    BotCommand("compact", "Compress conversation"),
-    BotCommand("setmychat", "Set proactive message chat"),
     BotCommand("briefing", "Morning briefing now"),
+    BotCommand("status", "Backend health"),
+    BotCommand("setmychat", "Set proactive message chat"),
+    BotCommand("compact", "Compress conversation"),
     BotCommand("delete_conversation", "Clear history"),
     BotCommand("board", "Board of Directors analysis"),
+    BotCommand("diagnostics", "Full self-check"),
     BotCommand("logs", "Diagnostics summary"),
     BotCommand("stats", "Usage stats"),
     BotCommand("costs", "API cost summary"),
-    BotCommand("routing", "Routing breakdown"),
-    BotCommand("diagnostics", "Full self-check"),
 ]
 
 
@@ -145,8 +184,9 @@ class TelegramBot:
         app.add_handler(CommandHandler("logs", handlers["logs"]))
         app.add_handler(CommandHandler("stats", handlers["stats"]))
         app.add_handler(CommandHandler("costs", handlers["costs"]))
-        app.add_handler(CommandHandler("routing", handlers["routing"]))
         app.add_handler(CommandHandler("diagnostics", handlers["diagnostics"]))
+        # Redirect handlers for removed commands (US-command-surface-reduction)
+        _register_redirect_handlers(app)
         app.add_handler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, handlers["message"])
         )

@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from ..memory.automations import AutomationStore
     from ..memory.counters import CounterStore
     from ..memory.goals import GoalStore
+    from ..memory.knowledge import KnowledgeStore
     from ..memory.plans import PlanStore
     from ..delivery.queue import OutboundQueue
     from ..google.calendar import CalendarClient
@@ -86,6 +87,7 @@ class HeartbeatHandler:
     def __init__(
         self,
         goal_store: "GoalStore | None" = None,
+        knowledge_store: "KnowledgeStore | None" = None,
         plan_store: "PlanStore | None" = None,
         calendar_client: "CalendarClient | None" = None,
         gmail_client: "GmailClient | None" = None,
@@ -97,6 +99,7 @@ class HeartbeatHandler:
         moonshot_client: "MoonshotClient | None" = None,
     ) -> None:
         self._goal_store = goal_store
+        self._knowledge_store = knowledge_store
         self._plan_store = plan_store
         self._calendar = calendar_client
         self._gmail = gmail_client
@@ -135,7 +138,19 @@ class HeartbeatHandler:
             items_checked["already_surfaced_today"] = already_surfaced_today
 
         # Goals
-        if self._goal_store:
+        if self._knowledge_store is not None:
+            try:
+                goals = await self._knowledge_store.get_goals_active(user_id, limit=20)
+                if goals:
+                    lines = [
+                        f"• {g.get('title', '')} (ID {g.get('id')})" for g in goals
+                    ]
+                    items_checked["goals"] = "Active goals:\n" + "\n".join(lines)
+                else:
+                    items_checked["goals"] = "No active goals."
+            except Exception as e:
+                items_checked["goals"] = f"Error: {e}"
+        elif self._goal_store:
             try:
                 goals = await self._goal_store.get_active(user_id, limit=20)
                 if goals:
@@ -227,6 +242,7 @@ class HeartbeatHandler:
                 balance = await self._moonshot_client.get_balance()
                 if balance is not None:
                     from ..config import settings
+
                     warn = getattr(settings, "moonshot_balance_warn_usd", 5.0)
                     if warn > 0 and balance < warn:
                         items_checked["moonshot_credits"] = (
@@ -234,7 +250,9 @@ class HeartbeatHandler:
                             "top up to avoid fallbacks."
                         )
                     else:
-                        items_checked["moonshot_credits"] = f"Moonshot credits: ${balance:.2f}"
+                        items_checked["moonshot_credits"] = (
+                            f"Moonshot credits: ${balance:.2f}"
+                        )
             except Exception:
                 pass  # Silent to user per PBI; already logged in get_balance
 

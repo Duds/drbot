@@ -32,7 +32,13 @@ async def exec_para_write_note(registry: ToolRegistry, inp: dict) -> str:
     entity_id = (inp.get("entity_id") or "").strip()
     if not entity_type or not entity_id:
         return "For entity notes, provide entity_type and entity_id (e.g. areas_people, john-smith)."
-    if entity_type not in ("projects", "areas_people", "areas_companies", "resources", "archives"):
+    if entity_type not in (
+        "projects",
+        "areas_people",
+        "areas_companies",
+        "resources",
+        "archives",
+    ):
         return f"Unknown entity_type: {entity_type}. Use projects, areas_people, areas_companies, resources, or archives."
     try:
         store.add_fact(entity_type, entity_id, content)
@@ -104,62 +110,28 @@ async def exec_get_logs(registry: ToolRegistry, inp: dict) -> str:
 
 async def exec_get_goals(registry: ToolRegistry, inp: dict, user_id: int) -> str:
     """Retrieve the user's active goals from memory."""
-    if registry._knowledge_store is None:
-        if registry._goal_store is None:
-            return "Goal store not available — memory system not initialised."
-        limit = min(int(inp.get("limit", 10)), 50)
-        include_plans = bool(inp.get("include_plans", False))
-        goals = await registry._goal_store.get_active(user_id, limit=limit)
-        if not goals:
-            return "No active goals found."
-        lines = []
-        for g in goals:
-            title = g.get("title", "Untitled")
-            desc = g.get("description", "")
-            gid = g.get("id", "?")
-            line = f"• [ID:{gid}] {title}"
-            if desc:
-                line += f" — {desc}"
-            if include_plans and registry._plan_store is not None:
-                try:
-                    plans = await registry._plan_store.list_plans(
-                        user_id, status="active", goal_id=g.get("id")
-                    )
-                    if plans:
-                        parts = []
-                        for p in plans:
-                            total = p.get("total_steps", 0)
-                            done = (p.get("step_counts") or {}).get("done", 0)
-                            parts.append(
-                                f"  {p['title']} (ID {p['id']}): {done}/{total} steps"
-                            )
-                        line += "\n" + "\n".join(parts)
-                except Exception:
-                    pass
-            lines.append(line)
-        return f"Active goals ({len(goals)}):\n" + "\n".join(lines)
-
+    if registry._knowledge_store is None and registry._goal_store is None:
+        return "Goal store not available — memory system not initialised."
     limit = min(int(inp.get("limit", 10)), 50)
     include_plans = bool(inp.get("include_plans", False))
-    goals = await registry._knowledge_store.get_by_type(user_id, "goal", limit=limit)
-
+    if registry._knowledge_store is not None:
+        goals = await registry._knowledge_store.get_goals_active(user_id, limit=limit)
+    else:
+        goals = await registry._goal_store.get_active(user_id, limit=limit)
     if not goals:
         return "No active goals found."
-
     lines = []
     for g in goals:
-        status = g.metadata.get("status", "active")
-        if status != "active":
-            continue
-        desc = g.metadata.get("description", "")
-        line = f"• [ID:{g.id}] {g.content}"
+        title = g.get("title", "Untitled")
+        desc = g.get("description", "") or ""
+        gid = g.get("id", "?")
+        line = f"• [ID:{gid}] {title}"
         if desc:
             line += f" — {desc}"
         if include_plans and registry._plan_store is not None:
             try:
-                # Goals from knowledge store use knowledge.id; filter plans by knowledge_goal_id
                 plans = await registry._plan_store.list_plans(
-                    user_id, status="active", knowledge_goal_id=g.id
+                    user_id, status="active", goal_id=g.get("id")
                 )
                 if plans:
                     parts = []
@@ -173,10 +145,6 @@ async def exec_get_goals(registry: ToolRegistry, inp: dict, user_id: int) -> str
             except Exception:
                 pass
         lines.append(line)
-
-    if not lines:
-        return "No active goals found."
-
     return (
         f"Active goals ({len(lines)}):\n"
         + "\n".join(lines)
@@ -236,12 +204,13 @@ async def exec_run_board(registry: ToolRegistry, inp: dict, user_id: int) -> str
     from ...agents import sdk_subagents
     from ...config import settings
 
-    if not getattr(settings, "use_sdk_agent", True) or not sdk_subagents.is_sdk_available():
+    if (
+        not getattr(settings, "use_sdk_agent", True)
+        or not sdk_subagents.is_sdk_available()
+    ):
         return "Board of Directors not available (install claude-agent-sdk)."
 
-    result = await sdk_subagents.run_board_analyst(
-        topic, "", user_id, "", registry
-    )
+    result = await sdk_subagents.run_board_analyst(topic, "", user_id, "", registry)
     return result or "Board analysis did not return a result."
 
 
@@ -270,10 +239,13 @@ async def exec_check_status(registry: ToolRegistry) -> str:
         available = await registry._moonshot_client.is_available()
         balance = await registry._moonshot_client.get_balance()
         from ...config import settings
+
         warn_usd = getattr(settings, "moonshot_balance_warn_usd", 5.0)
         if balance is not None:
             low = " ⚠️ low" if warn_usd > 0 and balance < warn_usd else ""
-            lines.append(f"Moonshot: {'✅ online' if available else '❌ offline'} — credits ${balance:.2f}{low}")
+            lines.append(
+                f"Moonshot: {'✅ online' if available else '❌ offline'} — credits ${balance:.2f}{low}"
+            )
         else:
             lines.append(f"Moonshot: {'✅ online' if available else '❌ offline'}")
 
@@ -425,16 +397,20 @@ async def exec_manage_goal(registry: ToolRegistry, inp: dict, user_id: int) -> s
     elif action == "snooze":
         if not goal_id:
             return "Please provide goal_id to snooze. Call get_goals to find IDs."
-        if registry._goal_store is None:
-            return "Snooze is not available (goal store not configured)."
-
         raw_until = (inp.get("until") or "").strip()
         if raw_until:
             until = raw_until[:10]
         else:
             until_dt = datetime.now(timezone.utc) + timedelta(days=7)
             until = until_dt.strftime("%Y-%m-%d")
-        ok = await registry._goal_store.snooze(user_id, int(goal_id), until)
+        if registry._knowledge_store is not None:
+            ok = await registry._knowledge_store.snooze_goal(
+                user_id, int(goal_id), until
+            )
+        elif registry._goal_store is not None:
+            ok = await registry._goal_store.snooze(user_id, int(goal_id), until)
+        else:
+            return "Snooze is not available (goal store not configured)."
         if not ok:
             return f"No goal with ID {goal_id} found."
         return f"✅ Goal {goal_id} snoozed. It won't appear in evening check-ins until {until}."

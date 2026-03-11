@@ -41,14 +41,46 @@ class MemoryDeps:
     plan_store: "PlanStore | None" = None
 
 
-@dataclass(frozen=False)
 class GoogleDeps:
-    """Google Workspace clients for handlers."""
+    """Google Workspace clients for handlers. Supports lazy init (US-lazy-service-init)."""
 
-    calendar: "CalendarClient | None" = None
-    gmail: "GmailClient | None" = None
-    docs: "DocsClient | None" = None
-    contacts: "ContactsClient | None" = None
+    def __init__(
+        self,
+        calendar: "CalendarClient | None" = None,
+        gmail: "GmailClient | None" = None,
+        docs: "DocsClient | None" = None,
+        contacts: "ContactsClient | None" = None,
+        lazy_google: Any = None,
+    ) -> None:
+        self._calendar = calendar
+        self._gmail = gmail
+        self._docs = docs
+        self._contacts = contacts
+        self._lazy_google = lazy_google
+
+    @property
+    def calendar(self) -> "CalendarClient | None":
+        if self._lazy_google is not None:
+            return self._lazy_google.calendar
+        return self._calendar
+
+    @property
+    def gmail(self) -> "GmailClient | None":
+        if self._lazy_google is not None:
+            return self._lazy_google.gmail
+        return self._gmail
+
+    @property
+    def docs(self) -> "DocsClient | None":
+        if self._lazy_google is not None:
+            return self._lazy_google.docs
+        return self._docs
+
+    @property
+    def contacts(self) -> "ContactsClient | None":
+        if self._lazy_google is not None:
+            return self._lazy_google.contacts
+        return self._contacts
 
 
 @dataclass(frozen=False)

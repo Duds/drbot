@@ -175,8 +175,10 @@ class KnowledgeStore:
 
                 # Collect match_ids under threshold, batch-fetch metadata
                 candidates = [
-                    m for m in similar
-                    if m.get("source_id") and m.get("distance", 1.0) < settings.fact_merge_threshold
+                    m
+                    for m in similar
+                    if m.get("source_id")
+                    and m.get("distance", 1.0) < settings.fact_merge_threshold
                 ]
                 if not candidates:
                     item_id = await self._insert(user_id, item, session_key=session_key)
@@ -355,6 +357,76 @@ class KnowledgeStore:
                 )
                 for row in rows
             ]
+
+    async def get_goals_active(
+        self, user_id: int, limit: int = 10
+    ) -> list[dict[str, Any]]:
+        """Return active goals (compatible with legacy GoalStore.get_active shape).
+        Excludes goals with status != 'active' or snoozed_until > today."""
+        from datetime import date
+
+        today = date.today().isoformat()
+        result = []
+        async with self._db.get_connection() as conn:
+            rows = await conn.execute_fetchall(
+                """
+                SELECT id, content, metadata, created_at, updated_at
+                FROM knowledge WHERE user_id=? AND entity_type='goal' AND confidence >= 0.5
+                ORDER BY created_at DESC LIMIT ?
+                """,
+                (user_id, limit * 2),
+            )
+        for row in rows:
+            meta = json.loads(row["metadata"])
+            status = meta.get("status", "active")
+            if status != "active":
+                continue
+            snoozed = meta.get("snoozed_until")
+            if snoozed and str(snoozed)[:10] > today:
+                continue
+            result.append(
+                {
+                    "id": row["id"],
+                    "title": row["content"],
+                    "description": meta.get("description"),
+                    "status": status,
+                    "created_at": row["created_at"],
+                    "updated_at": row["updated_at"],
+                    "snoozed_until": snoozed,
+                }
+            )
+            if len(result) >= limit:
+                break
+        return result
+
+    async def get_facts_by_category(
+        self, user_id: int, category: str, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        """Return facts in a category (compatible with FactStore.get_by_category shape)."""
+        items = await self.get_by_type(user_id, "fact", limit=limit)
+        out = []
+        for item in items:
+            if item.metadata.get("category") != category:
+                continue
+            out.append(
+                {
+                    "id": item.id,
+                    "category": category,
+                    "content": item.content,
+                    "confidence": item.confidence,
+                }
+            )
+        return out
+
+    async def snooze_goal(self, user_id: int, goal_id: int, until: str) -> bool:
+        """Set snoozed_until on a goal so it is hidden until that date. Returns True if updated."""
+        until_str = str(until).strip()[:10]
+        items = await self.get_by_type(user_id, "goal", limit=200)
+        target = next((i for i in items if i.id == goal_id), None)
+        if not target:
+            return False
+        new_meta = {**target.metadata, "snoozed_until": until_str}
+        return await self.update(user_id, goal_id, metadata=new_meta)
 
     async def get_memory_summary(self, user_id: int) -> dict[str, Any]:
         """Return a structured overview of stored memory for a user.
@@ -577,9 +649,7 @@ class KnowledgeStore:
                         item = line.strip().strip("- ").strip()
                         if item:
                             grocery_items.append(
-                                KnowledgeItem(
-                                    entity_type="shopping_item", content=item
-                                )
+                                KnowledgeItem(entity_type="shopping_item", content=item)
                             )
                 if grocery_items:
                     await self.upsert(user_id, grocery_items)

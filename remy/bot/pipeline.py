@@ -30,6 +30,7 @@ from ..ai.claude_client import (
 )
 from ..config import settings
 from ..models import ConversationTurn
+from .working_message import WORKING_PLACEHOLDER, tool_status_text
 
 if TYPE_CHECKING:
     from telegram import Bot
@@ -266,11 +267,11 @@ async def run_proactive_trigger(
             system_prompt = build_proactive_system_prompt(scenario, context)
 
         # ------------------------------------------------------------------ #
-        # 3. Send placeholder to Telegram                                      #
+        # 3. Send placeholder to Telegram (US-working-message-normalisation)  #
         # ------------------------------------------------------------------ #
         try:
             sent = await bot.send_message(
-                chat_id=chat_id, text="⏰ _…_", parse_mode="Markdown"
+                chat_id=chat_id, text=WORKING_PLACEHOLDER, parse_mode="Markdown"
             )
         except Exception as e:
             logger.error(
@@ -311,11 +312,14 @@ async def run_proactive_trigger(
                     in_tool_turn = True
                     try:
                         await sent.edit_text(
-                            f"_⚙️ Using {event.tool_name}…_",
+                            tool_status_text(event.tool_name),
                             parse_mode="Markdown",
                         )
                     except Exception as e:
-                        logger.debug("Failed to update tool status in pipeline: %s", e)
+                        logger.debug(
+                            "Failed to update tool status in pipeline (e.g. message deleted): %s",
+                            e,
+                        )
 
                 elif isinstance(event, ToolResultChunk):
                     pass  # ToolTurnComplete follows with the blocks we need
@@ -369,52 +373,67 @@ async def run_proactive_trigger(
                 logger.debug("Could not delete react_to_message status message: %s", e)
 
         # ------------------------------------------------------------------ #
-        # 4b. Attach keyboard — unified factory (Phase 3.12)                   #
-        #     Reminders: [Snooze 5m] [Snooze 15m] [Done]                       #
-        #     Briefings: [Add to calendar] for suggested_events only           #
+        # 4b. Attach keyboard — US-proactive-button-consistency               #
+        #     Standard: [✅ Done] [💤 Snooze 1h]; optional calendar row        #
         # ------------------------------------------------------------------ #
-        buttons_config = None
+        from .proactive_keyboard import ProactiveAction, make_proactive_keyboard
+
+        keyboard = None
         if context is None:
-            buttons_config = {
-                "type": "reminder",
-                "user_id": user_id,
-                "chat_id": chat_id,
-                "label": label,
-                "automation_id": automation_id,
-                "one_time": one_time,
-            }
-        elif context and (suggested := context.get("suggested_events")):
-            actions = []
-            for item in (suggested or [])[:4]:
-                when = item.get("when")
-                title = (item.get("title") or "Event").strip()
-                if when and title:
-                    btn_label = f"📅 {title}"[:32]
-                    actions.append(
-                        {
-                            "label": btn_label,
-                            "callback_id": "add_to_calendar",
-                            "payload": {"title": title, "when": when},
-                        }
-                    )
-            if actions:
-                buttons_config = {
-                    "type": "suggested_actions",
-                    "actions": actions,
-                    "user_id": user_id,
-                }
+            # Reminder: store payload and use standard Done + Snooze 1h
+            from .handlers.callbacks import store_reminder_payload
 
-        if buttons_config:
+            token = store_reminder_payload(
+                user_id=user_id,
+                chat_id=chat_id,
+                label=label,
+                automation_id=automation_id,
+                one_time=one_time,
+            )
+            keyboard = make_proactive_keyboard(
+                [ProactiveAction.DISMISS, ProactiveAction.SNOOZE_1H],
+                context_id=token,
+            )
+        else:
+            # Briefing or check-in: standard Done + Snooze 1h; optional calendar row
+            from datetime import date
+
+            ctx_id = f"b:{date.today().isoformat()}"
+            keyboard = make_proactive_keyboard(
+                [ProactiveAction.DISMISS, ProactiveAction.SNOOZE_1H],
+                context_id=ctx_id,
+            )
+            suggested = context.get("suggested_events")
+            if suggested:
+                from .handlers.callbacks import make_suggested_actions_keyboard
+
+                actions = []
+                for item in (suggested or [])[:4]:
+                    when = item.get("when")
+                    title = (item.get("title") or "Event").strip()
+                    if when and title:
+                        btn_label = f"📅 {title}"[:32]
+                        actions.append(
+                            {
+                                "label": btn_label,
+                                "callback_id": "add_to_calendar",
+                                "payload": {"title": title, "when": when},
+                            }
+                        )
+                if actions:
+                    extra = make_suggested_actions_keyboard(actions, user_id)
+                    if extra and extra.inline_keyboard:
+                        keyboard = type(keyboard)(
+                            keyboard.inline_keyboard + extra.inline_keyboard
+                        )
+
+        if keyboard and keyboard.inline_keyboard:
             try:
-                from .handlers.callbacks import make_proactive_keyboard
-
-                keyboard = make_proactive_keyboard(buttons_config)
-                if keyboard is not None:
-                    await bot.edit_message_reply_markup(
-                        chat_id=chat_id,
-                        message_id=sent.message_id,
-                        reply_markup=keyboard,
-                    )
+                await bot.edit_message_reply_markup(
+                    chat_id=chat_id,
+                    message_id=sent.message_id,
+                    reply_markup=keyboard,
+                )
             except Exception as e:
                 logger.debug("Could not attach proactive keyboard: %s", e)
 

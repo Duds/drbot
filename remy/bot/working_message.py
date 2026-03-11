@@ -1,19 +1,9 @@
 """
 Unified "working" placeholder for long-running operations.
 
-Phase 3.11: Single abstraction for "show placeholder, optionally animate, edit or replace".
-Used by chat, pipeline, background tasks, and admin handlers.
-
-Usage (background — delete placeholder, send new message)::
-
-    async with working_message(bot, chat_id, thread_id=thread_id) as wm:
-        result = await long_operation(...)
-    await bot.send_message(chat_id, result)
-
-Usage (edit-in-place — caller edits the message)::
-
-    async with working_message(bot, chat_id, animate=True) as wm:
-        await stream_into(wm.message)  # or wm.edit_to_result(text)
+Phase 3.11 / US-working-message-normalisation: Single abstraction for
+"show placeholder, optionally animate, edit or replace". Consistent copy
+and graceful degradation when the placeholder cannot be edited.
 """
 
 import asyncio
@@ -22,6 +12,21 @@ import logging
 import random
 
 logger = logging.getLogger(__name__)
+
+try:
+    from telegram.error import BadRequest
+except ImportError:
+    BadRequest = Exception  # type: ignore[misc, assignment]
+
+# Standardised copy (US-working-message-normalisation)
+WORKING_PLACEHOLDER = "_Working…_"
+ERROR_PLACEHOLDER = "⚠️ Something went wrong. Check /logs."
+
+
+def tool_status_text(tool_name: str) -> str:
+    """Format for mid-task tool indicator. Use when tool name is known."""
+    return f"_⚙️ Using {tool_name}…_"
+
 
 _PHRASES = [
     "Reticulating splines",
@@ -69,7 +74,7 @@ class WorkingMessage:
         chat_id: int,
         thread_id: int | None = None,
         *,
-        initial_text: str = "⚙️ …",
+        initial_text: str = WORKING_PLACEHOLDER,
         animate: bool = True,
     ) -> None:
         self._bot = bot
@@ -87,10 +92,31 @@ class WorkingMessage:
         """The sent Telegram message object (for caller to edit directly)."""
         return self._message
 
+    def mark_replaced(self) -> None:
+        """Mark the message as replaced so __aexit__ does not delete it."""
+        self._replaced = True
+
+    async def set_status(self, text: str, parse_mode: str = "Markdown") -> None:
+        """Update the placeholder mid-task (e.g. tool name). Graceful on edit failure."""
+        if not self._message_id:
+            return
+        try:
+            await self._bot.edit_message_text(
+                text, self._chat_id, self._message_id, parse_mode=parse_mode
+            )
+        except BadRequest as e:
+            logger.debug(
+                "WorkingMessage set_status edit failed (e.g. message deleted): %s", e
+            )
+        except Exception as e:
+            logger.debug("WorkingMessage set_status failed: %s", e)
+
     async def start(self) -> None:
         """Send the initial placeholder and optionally start the animation loop."""
         try:
             kwargs: dict = {"message_thread_id": self._thread_id}
+            if self._initial_text.startswith("_") and self._initial_text.endswith("_"):
+                kwargs["parse_mode"] = "Markdown"
             msg = await self._bot.send_message(
                 self._chat_id,
                 self._initial_text,
@@ -136,6 +162,10 @@ class WorkingMessage:
                 await self._bot.edit_message_text(
                     text, self._chat_id, self._message_id, parse_mode=parse_mode
                 )
+            except BadRequest as e:
+                logger.debug(
+                    "WorkingMessage edit_to_result failed (e.g. message deleted): %s", e
+                )
             except Exception as e:
                 logger.debug("WorkingMessage edit_to_result failed: %s", e)
 
@@ -144,6 +174,16 @@ class WorkingMessage:
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        if exc_type and self._message_id and not self._replaced:
+            try:
+                await self._bot.edit_message_text(
+                    ERROR_PLACEHOLDER,
+                    self._chat_id,
+                    self._message_id,
+                    parse_mode="Markdown",
+                )
+            except (BadRequest, Exception) as e:
+                logger.debug("WorkingMessage error placeholder edit failed: %s", e)
         await self.stop(delete=not self._replaced)
 
     async def _animate_loop(self) -> None:
@@ -159,6 +199,8 @@ class WorkingMessage:
                         self._chat_id,
                         self._message_id,
                     )
+                except BadRequest:
+                    pass  # e.g. message deleted by user
                 except Exception as e:
                     logger.debug("WorkingMessage edit failed: %s", e)
                 await asyncio.sleep(_EDIT_INTERVAL)

@@ -44,6 +44,7 @@ async def exec_set_project(registry: ToolRegistry, inp: dict, user_id: int) -> s
         )
     elif registry._fact_store is not None:
         from ...models import Fact
+
         fact = Fact(category="project", content=sanitized)
         await registry._fact_store.upsert(user_id, [fact])
 
@@ -56,11 +57,8 @@ async def exec_get_project_status(registry: ToolRegistry, user_id: int) -> str:
         return "Memory not available."
 
     if registry._knowledge_store is not None:
-        items = await registry._knowledge_store.query(
-            user_id=user_id,
-            entity_type="fact",
-            metadata_filter={"category": "project"},
-            limit=20,
+        items = await registry._knowledge_store.get_facts_by_category(
+            user_id, "project", limit=20
         )
         facts = [{"content": i.get("content", "")} for i in items]
     elif registry._fact_store is not None:
@@ -82,7 +80,9 @@ async def exec_get_project_status(registry: ToolRegistry, user_id: int) -> str:
                 if all_files:
                     latest = max(x.stat().st_mtime for x in all_files)
                     mod_str = _dt.fromtimestamp(latest).strftime("%Y-%m-%d %H:%M")
-                    lines.append(f"• {path}\n  {file_count} files, last modified {mod_str}")
+                    lines.append(
+                        f"• {path}\n  {file_count} files, last modified {mod_str}"
+                    )
                 else:
                     lines.append(f"• {path}\n  (empty)")
             except Exception as e:

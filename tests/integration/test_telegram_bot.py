@@ -124,8 +124,14 @@ class TestTelegramBot:
             assert mock_builder.read_timeout.called
 
     def test_phase3_commands_registered(self, mock_settings, sample_handlers):
-        """Phase 3: Assert collapsed commands are registered."""
-        PHASE3_COMMANDS = {
+        """Phase 3: main commands + redirect handlers (US-command-surface-reduction)."""
+        from remy.bot.telegram_bot import (
+            TelegramBot,
+            _REDIRECT_MESSAGES,
+        )
+        from telegram.ext import CommandHandler
+
+        PHASE3_MAIN = {
             "start",
             "help",
             "cancel",
@@ -138,7 +144,6 @@ class TestTelegramBot:
             "logs",
             "stats",
             "costs",
-            "routing",
             "diagnostics",
         }
         with patch("remy.bot.telegram_bot.Application") as mock_app:
@@ -158,9 +163,6 @@ class TestTelegramBot:
             mock_builder.post_init.return_value = mock_builder
             mock_builder.build.return_value = mock_application
 
-            from remy.bot.telegram_bot import TelegramBot
-            from telegram.ext import CommandHandler
-
             TelegramBot(handlers=sample_handlers)
 
             command_handler_calls = [
@@ -171,8 +173,11 @@ class TestTelegramBot:
             registered_commands = {
                 next(iter(c[0][0].commands)) for c in command_handler_calls
             }
-            assert registered_commands == PHASE3_COMMANDS
-            assert len(command_handler_calls) == 14
+            assert PHASE3_MAIN <= registered_commands
+            assert set(_REDIRECT_MESSAGES) <= registered_commands
+            assert len(command_handler_calls) == len(PHASE3_MAIN) + len(
+                _REDIRECT_MESSAGES
+            )
 
     def test_handlers_registered(self, mock_settings, sample_handlers):
         """Verify all handlers are registered with the application."""

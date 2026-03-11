@@ -22,6 +22,7 @@ from ...config import settings
 
 if TYPE_CHECKING:
     from ...memory.facts import FactStore
+    from ...memory.knowledge import KnowledgeStore
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,7 @@ def make_file_handlers(
     *,
     claude_client=None,
     fact_store: "FactStore | None" = None,
+    knowledge_store: "KnowledgeStore | None" = None,
 ):
     """
     Factory that returns file operation handlers.
@@ -183,11 +185,16 @@ def make_file_handlers(
         if err or sanitized is None:
             await update.message.reply_text(f"❌ {err}")
             return
-        from ...models import Fact
+        user_id = update.effective_user.id
+        if knowledge_store is not None:
+            await knowledge_store.add_item(
+                user_id, "fact", sanitized, {"category": "project"}
+            )
+        elif fact_store is not None:
+            from ...models import Fact
 
-        fact = Fact(category="project", content=sanitized)
-        if fact_store is not None:
-            await fact_store.upsert(update.effective_user.id, [fact])
+            fact = Fact(category="project", content=sanitized)
+            await fact_store.upsert(user_id, [fact])
         await update.message.reply_text(f"Project set: {sanitized}")
 
     async def project_status_command(
@@ -198,10 +205,14 @@ def make_file_handlers(
             return
         if await reject_unauthorized(update):
             return
-        if fact_store is None:
+        user_id = update.effective_user.id
+        if knowledge_store is not None:
+            facts = await knowledge_store.get_facts_by_category(user_id, "project")
+        elif fact_store is not None:
+            facts = await fact_store.get_by_category(user_id, "project")
+        else:
             await update.message.reply_text("Memory not available.")
             return
-        facts = await fact_store.get_by_category(update.effective_user.id, "project")
         if not facts:
             await update.message.reply_text("No project set yet.")
             return

@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from ...memory.goals import GoalStore
+    from ...memory.knowledge import KnowledgeStore
     from ...memory.plans import PlanStore
     from ...memory.facts import FactStore
     from ...memory.file_index import FileIndexer
@@ -38,6 +39,7 @@ class BriefingGenerator(ABC):
         self,
         user_id: int,
         goal_store: "GoalStore | None" = None,
+        knowledge_store: "KnowledgeStore | None" = None,
         plan_store: "PlanStore | None" = None,
         fact_store: "FactStore | None" = None,
         calendar: "CalendarClient | None" = None,
@@ -49,6 +51,7 @@ class BriefingGenerator(ABC):
     ) -> None:
         self._user_id = user_id
         self._goal_store = goal_store
+        self._knowledge_store = knowledge_store
         self._plan_store = plan_store
         self._fact_store = fact_store
         self._calendar = calendar
@@ -65,27 +68,34 @@ class BriefingGenerator(ABC):
 
     async def _get_active_goals(self, limit: int = 10) -> list[dict[str, Any]]:
         """Fetch active goals for the user."""
+        if self._knowledge_store is not None:
+            return await self._knowledge_store.get_goals_active(
+                self._user_id, limit=limit
+            )
         if not self._goal_store:
             return []
         return await self._goal_store.get_active(self._user_id, limit=limit)
 
     async def _get_stale_goals(self, days: int = 3) -> list[dict[str, Any]]:
         """Fetch goals not updated within N days."""
-        if not self._goal_store:
+        goals = await self._get_active_goals(limit=10)
+        if not goals:
             return []
         cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-        goals = await self._goal_store.get_active(self._user_id, limit=10)
         stale = []
         for g in goals:
-            ts_str = g.get("updated_at") or g.get("created_at", "")
+            ts_str = g.get("updated_at") or g.get("created_at") or ""
             if not ts_str:
+                stale.append(g)  # No timestamp: treat as stale
                 continue
             try:
-                ts = datetime.fromisoformat(ts_str).replace(tzinfo=timezone.utc)
+                ts = datetime.fromisoformat(str(ts_str).replace("Z", "+00:00"))
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
                 if ts < cutoff:
                     stale.append(g)
-            except ValueError:
-                continue
+            except (ValueError, TypeError):
+                stale.append(g)
         return stale
 
     def _format_date_header(self) -> str:

@@ -98,6 +98,7 @@ def make_handlers(
         make_file_handlers(
             claude_client=claude_client,
             fact_store=mem.fact_store,
+            knowledge_store=mem.knowledge_store,
         )
     )
 
@@ -131,6 +132,7 @@ def make_handlers(
             conv_store=mem.conv_store,  # type: ignore[arg-type]
             claude_client=claude_client,
             goal_store=mem.goal_store,
+            knowledge_store=mem.knowledge_store,
             plan_store=mem.plan_store,
             job_store=sched.job_store,
             scheduler_ref=sched.scheduler_ref,  # type: ignore[arg-type]

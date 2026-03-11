@@ -80,9 +80,7 @@ async def run_research_flow(
                 message_thread_id=thread_id,
             )
             return
-        msg = await sdk_subagents.run_deep_researcher(
-            topic, user_id, tool_registry
-        )
+        msg = await sdk_subagents.run_deep_researcher(topic, user_id, tool_registry)
         if not msg:
             msg = "Research did not return a result."
         await wm.stop()
@@ -208,6 +206,7 @@ def make_web_handlers(
                 chat_action=ChatAction.UPLOAD_DOCUMENT,
                 run_again_markup=run_again_markup,
             )
+
             async def _research_coro() -> str:
                 result = await sdk_subagents.run_deep_researcher(
                     topic, user_id, tool_registry
@@ -238,10 +237,14 @@ def make_web_handlers(
             return
         if await reject_unauthorized(update):
             return
-        if fact_store is None:
+        user_id = update.effective_user.id
+        if knowledge_store is not None:
+            items = await knowledge_store.get_facts_by_category(user_id, "bookmark")
+        elif fact_store is not None:
+            items = await fact_store.get_by_category(user_id, "bookmark")
+        else:
             await update.message.reply_text("Memory not available.")
             return
-        items = await fact_store.get_by_category(update.effective_user.id, "bookmark")
         if not items:
             await update.message.reply_text(
                 "🔖 No bookmarks saved yet. Use /save-url <url> to add one."
@@ -389,7 +392,9 @@ def make_web_handlers(
             wm = WorkingMessage(bot, chat_id, thread_id)
             await wm.start()
             job_id = await job_store.create(user_id, "research", topic)
-            run_again_markup = make_run_again_keyboard("research", {"topic": topic}, user_id)
+            run_again_markup = make_run_again_keyboard(
+                "research", {"topic": topic}, user_id
+            )
             runner = BackgroundTaskRunner(
                 bot,
                 chat_id,

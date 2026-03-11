@@ -835,8 +835,6 @@ class ProactiveScheduler:
                 await self._knowledge_store.add_item(
                     user_id, "fact", fact_content, {"category": "other"}
                 )
-            elif self._fact_store is not None:
-                await self._fact_store.add(user_id, fact_content, category="other")
             logger.info(
                 "Logged completed one-time reminder as fact for user %d: %s",
                 user_id,
@@ -974,6 +972,7 @@ class ProactiveScheduler:
         generator = MorningBriefingGenerator(
             user_id=user_id,
             goal_store=self._goal_store,
+            knowledge_store=self._knowledge_store,
             plan_store=self._plan_store,
             fact_store=self._fact_store,
             calendar=self._calendar,
@@ -1031,7 +1030,10 @@ class ProactiveScheduler:
             return
         user_id = user_ids[0]
         goals_text = ""
-        if self._goal_store:
+        if self._knowledge_store is not None:
+            goals = await self._knowledge_store.get_goals_active(user_id, limit=10)
+            goals_text = ", ".join((g.get("title") or "") for g in goals)
+        elif self._goal_store:
             goals = await self._goal_store.get_active(user_id, limit=10)
             goals_text = ", ".join((g.get("title") or "") for g in goals)
         tz_name = getattr(settings, "scheduler_timezone", "Australia/Sydney")
@@ -1130,6 +1132,7 @@ class ProactiveScheduler:
         generator = EveningCheckinGenerator(
             user_id=user_id,
             goal_store=self._goal_store,
+            knowledge_store=self._knowledge_store,
             stale_days=settings.stale_goal_days,
             conv_store=self._conv_store,
             calendar=self._calendar,
@@ -1204,7 +1207,10 @@ class ProactiveScheduler:
 
         user_id = user_ids[0]
         context: dict = {"afternoon_check": True, "goals": [], "calendar_summary": None}
-        if self._goal_store is not None:
+        if self._knowledge_store is not None:
+            goals = await self._knowledge_store.get_goals_active(user_id, limit=5)
+            context["goals"] = [{"title": g.get("title")} for g in goals]
+        elif self._goal_store is not None:
             goals = await self._goal_store.get_active(user_id, limit=5)
             context["goals"] = [{"title": g.get("title")} for g in goals]
         if self._calendar is not None:
@@ -1470,10 +1476,11 @@ class ProactiveScheduler:
                 except Exception as e:
                     logger.warning("Could not store consolidated fact: %s", e)
 
-        # Store extracted goals (Phase 1.4: prefer KnowledgeStore)
+        # Store extracted goals (Phase 1.4: prefer KnowledgeStore; fall back to GoalStore)
         goals = data.get("goals", [])
-        store_goals = self._knowledge_store is not None or self._goal_store is not None
-        if goals and store_goals:
+        if goals and (
+            self._knowledge_store is not None or self._goal_store is not None
+        ):
             for goal in goals[:5]:  # Cap at 5 goals per day
                 title = goal.get("title", "").strip()
                 description = goal.get("description", "").strip() or None
@@ -1487,8 +1494,10 @@ class ProactiveScheduler:
                         await self._knowledge_store.add_item(
                             user_id, "goal", title, metadata
                         )
-                    else:
-                        await self._goal_store.add(user_id, title, description)
+                    elif self._goal_store is not None:
+                        await self._goal_store.add(
+                            user_id, title, description=description
+                        )
                     goals_stored += 1
                     logger.debug("Consolidated goal: %s", title[:50])
                 except Exception as e:

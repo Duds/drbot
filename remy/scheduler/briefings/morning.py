@@ -149,7 +149,20 @@ class MorningBriefingGenerator(BriefingGenerator):
         # until we have a source (e.g. calendar-invite emails, meeting requests).
         payload["suggested_events"] = []
 
-        if self._fact_store:
+        if self._knowledge_store is not None:
+            try:
+                project_facts = await self._knowledge_store.get_facts_by_category(
+                    self._user_id, "project", limit=5
+                )
+                payload["projects"] = [
+                    pf.get("content", "")[:80]
+                    for pf in project_facts
+                    if pf.get("content")
+                ]
+            except Exception as e:
+                logger.debug("Could not load projects for structured briefing: %s", e)
+                payload["projects"] = []
+        elif self._fact_store:
             try:
                 project_facts = await self._fact_store.get_by_category(
                     self._user_id, "project"
@@ -286,15 +299,19 @@ class MorningBriefingGenerator(BriefingGenerator):
 
     async def _build_projects_section(self) -> str:
         """Build tracked projects section from facts."""
-        if self._fact_store is None:
-            return ""
         try:
-            project_facts = await self._fact_store.get_by_category(
-                self._user_id, "project"
-            )
+            if self._knowledge_store is not None:
+                project_facts = await self._knowledge_store.get_facts_by_category(
+                    self._user_id, "project", limit=5
+                )
+            elif self._fact_store is not None:
+                project_facts = await self._fact_store.get_by_category(
+                    self._user_id, "project"
+                )
+            else:
+                return ""
             if not project_facts:
                 return ""
-
             project_lines = [f"• `{pf['content']}`" for pf in project_facts[:3]]
             return "📁 *Tracked projects:*\n" + "\n".join(project_lines)
         except Exception as e:

@@ -17,6 +17,41 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# US-lazy-service-init: run initial file index on first file-tool use, not at startup
+_file_initial_index_lock = asyncio.Lock()
+_file_initial_index_scheduled = False
+
+
+async def _run_initial_index(indexer):
+    try:
+        logger.info(
+            "File index is empty — running initial index in background (first use)"
+        )
+        stats = await indexer.run_incremental()
+        logger.info(
+            "Initial file index complete: %d files, %d chunks",
+            stats.get("files_indexed", 0),
+            stats.get("chunks_created", 0),
+        )
+    except Exception as e:
+        logger.warning("Initial file index failed: %s", e)
+
+
+async def _ensure_initial_index_started(indexer):
+    """Schedule initial index once if index is empty. Safe to call from file tools."""
+    global _file_initial_index_scheduled
+    async with _file_initial_index_lock:
+        if _file_initial_index_scheduled:
+            return
+        try:
+            status = await indexer.get_status()
+            if status.files_indexed > 0:
+                return
+        except Exception:
+            return
+        _file_initial_index_scheduled = True
+    asyncio.create_task(_run_initial_index(indexer))
+
 
 def _sanitize_path(raw: str) -> tuple[str | None, str | None]:
     """Expand ~ and validate path is within allowed base dirs."""
@@ -168,7 +203,9 @@ async def exec_write_file(registry: ToolRegistry, inp: dict) -> str:
         from ..bot.handlers.callbacks import store_pending_file_write
 
         user_id: int = getattr(registry, "_current_user_id", 0)
-        token = store_pending_file_write(user_id=user_id, path=safe_path, content=content)
+        token = store_pending_file_write(
+            user_id=user_id, path=safe_path, content=content
+        )
         size_kb = len(content.encode("utf-8")) / 1024
         return (
             f"APPROVAL_REQUIRED|type=file_write|token={token}|"
@@ -504,6 +541,8 @@ async def exec_search_files(registry: ToolRegistry, inp: dict) -> str:
     if not registry._file_indexer.enabled:
         return "File indexing is disabled in configuration."
 
+    await _ensure_initial_index_started(registry._file_indexer)
+
     query = inp.get("query", "").strip()
     if not query:
         return "No search query provided."
@@ -552,6 +591,8 @@ async def exec_index_status(registry: ToolRegistry) -> str:
 
     if not registry._file_indexer.enabled:
         return "File indexing is disabled in configuration."
+
+    await _ensure_initial_index_started(registry._file_indexer)
 
     try:
         status = await registry._file_indexer.get_status()
