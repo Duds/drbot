@@ -22,7 +22,6 @@ from ...utils.telegram_formatting import format_telegram_message
 
 if TYPE_CHECKING:
     from ...agents.agent_task_lifecycle import AgentTaskStore
-    from ...agents.orchestrator import BoardOrchestrator
     from ...memory.automations import AutomationStore
     from ...memory.background_jobs import BackgroundJobStore
     from ...memory.injector import MemoryInjector
@@ -34,14 +33,13 @@ logger = logging.getLogger(__name__)
 def make_automation_handlers(
     *,
     claude_client=None,
-    board_orchestrator: "BoardOrchestrator | None" = None,
     tool_registry=None,
     memory_injector: "MemoryInjector | None" = None,
     automation_store: "AutomationStore | None" = None,
     job_store: "BackgroundJobStore | None" = None,
     agent_task_store: "AgentTaskStore | None" = None,
     proactive_scheduler: "ProactiveScheduler | None" = None,
-    scheduler_ref: dict | None = None,
+    scheduler_ref=None,
 ):
     """
     Factory that returns automation and task handlers.

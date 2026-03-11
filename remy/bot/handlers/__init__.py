@@ -141,7 +141,6 @@ def make_handlers(
     handlers.update(
         make_automation_handlers(
             claude_client=claude_client,
-            board_orchestrator=core.board_orchestrator,
             tool_registry=tool_registry,
             memory_injector=mem.memory_injector,
             automation_store=sched.automation_store,
@@ -182,7 +181,6 @@ def make_handlers(
         session_manager=session_manager,
         conv_store=mem.conv_store,  # type: ignore[arg-type]
         db=db,
-        board_orchestrator=core.board_orchestrator,
         job_store=sched.job_store,
         memory_injector=mem.memory_injector,
         run_research_flow=handlers.get("run_research_flow"),

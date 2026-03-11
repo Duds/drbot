@@ -103,9 +103,6 @@ def main() -> None:
     # Bot reference is set in post_init once PTB application is ready
     outbound_queue = OutboundQueue(db_path=db.db_path, bot=None)
 
-    # Board of Directors: /board and run_board use SDK board-analyst only (US-claude-agent-sdk-migration).
-    board_orchestrator = None
-
     # Tool registry — enables native Anthropic tool use (function calling)
     # Wired after memory components are initialised below
     # (fact_store and goal_store are set up in the next block)
@@ -218,7 +215,6 @@ def main() -> None:
         logs_dir=settings.logs_dir,
         knowledge_store=knowledge_store,
         knowledge_extractor=knowledge_extractor,
-        board_orchestrator=board_orchestrator,
         claude_client=claude_client,
         mistral_client=mistral_client,
         moonshot_client=moonshot_client,
@@ -229,7 +225,7 @@ def main() -> None:
         contacts_client=google_contacts,
         docs_client=google_docs,
         automation_store=automation_store,
-        scheduler_ref=startup_ctx,  # type: ignore[arg-type]
+        scheduler_ref=startup_ctx,
         conversation_analyzer=conv_analyzer,
         job_store=job_store,
         plan_store=plan_store,
@@ -298,14 +294,13 @@ def main() -> None:
     )
     scheduler_deps = SchedulerDeps(
         proactive_scheduler=None,  # /briefing via proxy
-        scheduler_ref=startup_ctx,  # type: ignore[arg-type]
+        scheduler_ref=startup_ctx,
         automation_store=automation_store,
         counter_store=counter_store,
         job_store=job_store,
         agent_task_store=agent_task_store,
     )
     core_deps = CoreDeps(
-        board_orchestrator=board_orchestrator,
         voice_transcriber=voice_transcriber,
         conversation_analyzer=conv_analyzer,
         diagnostics_runner=diagnostics_runner,

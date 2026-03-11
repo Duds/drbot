@@ -85,7 +85,6 @@ def make_registry(**kwargs) -> ToolRegistry:
         goal_store=None,
         fact_store=None,
         knowledge_store=None,
-        board_orchestrator=None,
         claude_client=None,
         ollama_base_url="http://localhost:11434",
         model_complex="claude-sonnet-4-6",

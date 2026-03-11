@@ -34,7 +34,7 @@ def make_memory_handlers(
     goal_store: "GoalStore | None" = None,
     plan_store: "PlanStore | None" = None,
     job_store: "BackgroundJobStore | None" = None,
-    scheduler_ref: dict | None = None,
+    scheduler_ref=None,
 ):
     """
     Factory that returns memory and goal handlers.

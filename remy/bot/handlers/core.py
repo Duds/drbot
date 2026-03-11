@@ -27,7 +27,7 @@ def make_core_handlers(
     session_manager: SessionManager,
     tool_registry: "ToolRegistry | None" = None,
     proactive_scheduler: "ProactiveScheduler | None" = None,
-    scheduler_ref: dict | None = None,
+    scheduler_ref=None,
     automation_store=None,
     counter_store=None,
 ):

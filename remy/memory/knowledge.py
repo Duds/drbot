@@ -16,6 +16,7 @@ import os
 from typing import Any, Literal, Optional, cast
 
 from ..ai.claude_client import ClaudeClient
+from ..ai.json_utils import strip_code_fences
 from ..config import settings
 from ..models import KnowledgeItem
 from .database import DatabaseManager
@@ -104,11 +105,7 @@ class KnowledgeExtractor:
                 max_tokens=1000,
             )
 
-            cleaned = raw.strip()
-            if cleaned.startswith("```"):
-                cleaned = cleaned.split("\n", 1)[-1].rsplit("```", 1)[0]
-
-            data = json.loads(cleaned.strip())
+            data = json.loads(strip_code_fences(raw))
             if not isinstance(data, list):
                 return []
 

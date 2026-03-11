@@ -11,6 +11,7 @@ from datetime import datetime
 from typing import Any
 
 from ..ai.claude_client import ClaudeClient
+from ..ai.json_utils import strip_code_fences
 from ..config import settings
 from ..models import Goal
 from .database import DatabaseManager
@@ -77,12 +78,7 @@ class GoalExtractor:
                 model=settings.model_simple,
                 max_tokens=512,
             )
-            # Strip markdown code fences if Claude wraps the JSON
-            cleaned = raw.strip()
-            if cleaned.startswith("```"):
-                cleaned = cleaned.split("\n", 1)[-1]
-                cleaned = cleaned.rsplit("```", 1)[0]
-            data = json.loads(cleaned.strip())
+            data = json.loads(strip_code_fences(raw))
             if not isinstance(data, list):
                 return []
             goals = []

@@ -97,7 +97,7 @@ def make_chat_handlers(
     tool_registry: "ToolRegistry | None" = None,
     google_gmail: "GmailClient | None" = None,
     diagnostics_runner: "DiagnosticsRunner | None" = None,
-    scheduler_ref: dict | None = None,
+    scheduler_ref=None,
     proactive_scheduler=None,
 ):
     """
